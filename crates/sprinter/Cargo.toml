@@ -27,7 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true

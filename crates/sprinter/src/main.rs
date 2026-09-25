@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
-use sprinter::{auth, config, db, generation::Manager, logging, state, web};
+use sprinter::{auth, config, db, generation::Manager, logging, state, uploads, web};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -74,6 +74,10 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
     }
     let config = Arc::new(config);
     let app_state = state::AppState::new(pool, config.clone());
+    tokio::spawn(uploads::gc_loop(
+        app_state.pool.clone(),
+        config.data_dir.clone(),
+    ));
     let listener = TcpListener::bind(address).await?;
     info!(version = env!("CARGO_PKG_VERSION"), bind = %address,
         data_dir = %config.data_dir.display(), workers = config.worker_threads,

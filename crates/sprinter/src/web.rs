@@ -1,4 +1,4 @@
-use crate::{auth, chats, generation, messages, settings, state::AppState};
+use crate::{auth, chats, generation, messages, settings, state::AppState, uploads};
 use axum::{
     Router,
     body::Body,
@@ -17,15 +17,20 @@ use ulid::Ulid;
 struct Assets;
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/healthz", get(healthz))
+    // JSON APIs keep a small request cap. Raw uploads have their own streamed,
+    // per-kind limits and therefore must sit outside this layer.
+    let limited_api = Router::new()
         .merge(auth::router(state.clone()))
         .merge(settings::router(state.clone()))
         .merge(chats::router(state.clone()))
         .merge(messages::router(state.clone()))
         .merge(generation::router(state.clone()))
+        .layer(RequestBodyLimitLayer::new(1024 * 1024));
+    Router::new()
+        .route("/healthz", get(healthz))
+        .merge(limited_api)
+        .merge(uploads::router(state.clone()))
         .fallback(spa_fallback)
-        .layer(RequestBodyLimitLayer::new(1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(middleware::from_fn(request_id))
         .with_state(state)

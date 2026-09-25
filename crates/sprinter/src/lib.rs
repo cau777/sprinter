@@ -9,4 +9,5 @@ pub mod messages;
 pub mod openrouter;
 pub mod settings;
 pub mod state;
+pub mod uploads;
 pub mod web;
