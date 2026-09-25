@@ -50,6 +50,7 @@ model provider.
 | [08-deployment.md](08-deployment.md) | Reverse proxy, image, env vars, backups, export | Decided |
 | [09-data-model.md](09-data-model.md) | SQLite schema | Decided |
 | [10-api.md](10-api.md) | HTTP API and SSE protocol | Decided |
+| [11-testing.md](11-testing.md) | E2E (Playwright + fake OpenRouter), backend tests | Decided |
 
 ## Open questions
 

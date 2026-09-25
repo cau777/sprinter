@@ -48,6 +48,7 @@ These go in the README with example Caddy and nginx snippets.
 | `BACKUP_KEEP` | `7` | Number of daily DB snapshots to keep |
 | `RUST_LOG` | `info` | Log filter. Logs are written to stdout as JSON. |
 | `SPRINTER_INSECURE_COOKIES` | `false` | Development only: drops the `Secure` cookie flag for plain-HTTP localhost |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for tests (fake OpenRouter). See [11-testing.md](11-testing.md). |
 
 ## Backups
 
