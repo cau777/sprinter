@@ -2,5 +2,12 @@
   "name": "@sprinter/e2e",
   "private": true,
   "version": "0.0.0",
-  "scripts": {"test": "playwright test"}
+  "scripts": {
+    "test": "playwright test",
+    "e2e": "npm run build --workspace @sprinter/web && cargo build --manifest-path ../Cargo.toml --package sprinter --package fake-openrouter && playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
 }

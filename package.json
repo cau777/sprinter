@@ -5,6 +5,8 @@
   "scripts": {
     "build": "npm run build --workspace web",
     "dev": "npm run dev --workspace web",
-    "check": "npm run check --workspace web"
+    "check": "npm run check --workspace web",
+    "e2e": "npm run e2e --workspace e2e",
+    "e2e:ui": "npm run e2e:ui --workspace e2e"
   }
 }
