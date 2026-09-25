@@ -1,48 +1,82 @@
 use axum::{
+    Router,
     body::Body,
     extract::{Request, State},
-    http::{header, HeaderName, HeaderValue, StatusCode, Uri},
+    http::{HeaderName, HeaderValue, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
-use sqlx::SqlitePool;
 use std::time::Instant;
 use tower_http::{compression::CompressionLayer, limit::RequestBodyLimitLayer};
 use ulid::Ulid;
+use crate::{auth, state::AppState};
 
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../web/dist/"]
 struct Assets;
 
-pub fn router(pool: SqlitePool) -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .merge(auth::router(state.clone()))
         .fallback(spa_fallback)
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
         .layer(CompressionLayer::new())
         .layer(middleware::from_fn(request_id))
-        .with_state(pool)
+        .with_state(state)
 }
 
-async fn healthz(State(pool): State<SqlitePool>) -> Response {
-    match sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&pool).await {
-        Ok(_) => (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], r#"{"status":"ok"}"#).into_response(),
-        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, [(header::CONTENT_TYPE, "application/json")], r#"{"status":"unavailable"}"#).into_response(),
+async fn healthz(State(state): State<AppState>) -> Response {
+    match sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"status":"ok"}"#,
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"status":"unavailable"}"#,
+        )
+            .into_response(),
     }
 }
 
-async fn request_id(request: Request, next: Next) -> Response {
+async fn request_id(mut request: Request, next: Next) -> Response {
     let request_id = Ulid::new().to_string();
     let started = Instant::now();
+    request.headers_mut().insert(
+        HeaderName::from_static("x-request-id"),
+        HeaderValue::from_str(&request_id).expect("ULID is a valid header value"),
+    );
     let span = tracing::info_span!("request", rid = %request_id, method = %request.method(), path = %request.uri().path());
     let mut response = next.run(request).instrument(span).await;
-    tracing::debug!(status = response.status().as_u16(), latency_ms = started.elapsed().as_millis(), "completed");
-    response.headers_mut().insert(HeaderName::from_static("x-request-id"), HeaderValue::from_str(&request_id).expect("validated request id"));
-    response.headers_mut().insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
-    response.headers_mut().insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    response.headers_mut().insert(HeaderName::from_static("permissions-policy"), HeaderValue::from_static("camera=(), microphone=(), geolocation=()"));
+    tracing::debug!(
+        status = response.status().as_u16(),
+        latency_ms = started.elapsed().as_millis(),
+        "completed"
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("x-request-id"),
+        HeaderValue::from_str(&request_id).expect("validated request id"),
+    );
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
     response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"));
     response
 }
@@ -51,25 +85,51 @@ use tracing::Instrument;
 
 async fn spa_fallback(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
-    if path == "api" || path.starts_with("api/") { return StatusCode::NOT_FOUND.into_response(); }
-    let asset = if path.is_empty() { None } else { Assets::get(path) };
+    if path == "api" || path.starts_with("api/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let asset = if path.is_empty() {
+        None
+    } else {
+        Assets::get(path)
+    };
     let asset = asset.or_else(|| Assets::get("index.html"));
     let Some(asset) = asset else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "Frontend bundle is not built yet").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Frontend bundle is not built yet",
+        )
+            .into_response();
     };
     let content_type = mime_type(path);
     let mut response = Response::new(Body::from(asset.data.into_owned()));
     *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(if path.is_empty() || path == "index.html" { "no-cache" } else { "public, max-age=31536000, immutable" }));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(if path.is_empty() || path == "index.html" {
+            "no-cache"
+        } else {
+            "public, max-age=31536000, immutable"
+        }),
+    );
     response
 }
 
 fn mime_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
-        "html" => "text/html; charset=utf-8", "js" => "text/javascript; charset=utf-8",
-        "css" => "text/css; charset=utf-8", "svg" => "image/svg+xml", "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg", "webp" => "image/webp", "woff2" => "font/woff2",
-        "json" | "webmanifest" => "application/json", "ico" => "image/x-icon", _ => "application/octet-stream",
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "woff2" => "font/woff2",
+        "json" | "webmanifest" => "application/json",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
     }
 }

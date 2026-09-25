@@ -9,13 +9,13 @@ RUN npm ci
 COPY web ./web
 RUN npm --workspace web run build
 
-FROM rust:1.86-alpine AS server-build
+FROM rust:1.90-alpine AS server-build
 RUN apk add --no-cache build-base perl pkgconf
 WORKDIR /src
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY --from=web-build /src/web/dist ./web/dist
-RUN cargo build --release -p sprinter
+RUN cargo build --locked --release -p sprinter
 
 FROM alpine:3.21 AS certs
 RUN apk add --no-cache ca-certificates

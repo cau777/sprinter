@@ -1,11 +1,13 @@
 mod config;
 mod db;
+mod auth;
 mod logging;
+mod state;
 mod web;
 
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
-use std::{error::Error, net::SocketAddr};
+use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -49,7 +51,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 async fn healthcheck(config: &config::Config) -> Result<(), Box<dyn Error>> {
     let pool = db::connect(config).await?;
-    sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&pool).await?;
+    sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(&pool)
+        .await?;
     pool.close().await;
     Ok(())
 }
@@ -60,9 +64,15 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
         return Err("SPRINTER_PASSWORD is required".into());
     }
     let pool = db::connect(&config).await?;
-    sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&pool).await?;
+    sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(&pool)
+        .await?;
 
     let address: SocketAddr = config.bind_address;
+    let password = config.master_password.as_ref().expect("checked above");
+    auth::initialize_password(&pool, password).await?;
+    let config = Arc::new(config);
+    let app_state = state::AppState::new(pool, config.clone());
     let listener = TcpListener::bind(address).await?;
     info!(version = env!("CARGO_PKG_VERSION"), bind = %address,
         data_dir = %config.data_dir.display(), workers = config.worker_threads,
@@ -70,7 +80,7 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
         insecure_cookies = config.insecure_cookies, openrouter_base_url = %config.openrouter_base_url,
         trusted_proxies = ?config.trusted_proxies,
         key_set = false, "starting");
-    axum::serve(listener, web::router(pool))
+    axum::serve(listener, web::router(app_state).into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     info!("stopped");
