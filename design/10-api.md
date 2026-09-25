@@ -46,7 +46,7 @@ Status: **Decided**
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/api/chats/:id/messages` | `{parent_id: string\|null, content, attachment_ids: [], model?}`. Inserts the user message plus an assistant message with status `streaming`, sets `current_leaf_id`, starts generation, and returns `{user_message, assistant_message}`. **Edit** is the same call with `parent_id` set to the edited message's parent. |
+| POST | `/api/chats/:id/messages` | `{parent_id: string\|null, content, attachment_ids: [], model?, pdf_engine?}`. Inserts the user message plus an assistant message with status `streaming`, sets `current_leaf_id`, starts generation, and returns `{user_message, assistant_message}`. `pdf_engine` is an optional request-level override applied to all uncached PDFs in the outgoing prompt; when omitted, the Settings default is used. **Edit** is the same call with `parent_id` set to the edited message's parent. |
 | POST | `/api/chats/new/messages` | Same body, but creates the chat first. Returns the chat as well. This avoids empty chats in the sidebar. |
 | POST | `/api/messages/:id/regenerate` | `{model?}` on an assistant message creates a sibling assistant message and starts generation. `model` applies to this retry only and doesn't change the chat's model. |
 | POST | `/api/messages/:id/cancel` | Stops the generation and keeps the partial content. |

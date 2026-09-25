@@ -7,8 +7,7 @@ Status: **Decided**
 | Kind | Examples | How it reaches the model |
 |---|---|---|
 | Images | png, jpg, webp, gif | Sent as OpenRouter `image_url` content parts (base64 data URL). Only offered when the selected model supports image input. |
-| PDFs | pdf | Sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` ($2 per 1k pages, for scans), and `native` (models with built-in PDF support, billed as input tokens). **We always send the engine explicitly and default to `cloudflare-ai`**, because OpenRouter's own default is the paid `mistral-ocr`. The default is set in Settings, with a per-attachment "OCR" toggle in the composer, stored as
-`message_attachments.pdf_engine`. |
+| PDFs | pdf | Sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` (paid, for scans), and `native` (models with built-in PDF support, billed as input tokens). The plugin accepts one engine per request, so the Settings default or a single composer override applies to all uncached PDFs in the prompt. `message_attachments.pdf_engine` records the engine requested when each PDF was attached. The effective engine override is sent in the message request. |
 | Text and code | txt, md, csv, json, source files | Inlined into the user message as a fenced block labeled with the filename. No provider-side file support is needed. |
 
 Office documents (docx/xlsx/pptx) are **out of scope** for v1.
@@ -35,8 +34,8 @@ INSERT uploads(id, sha256, filename, mime, kind, size, created_at)
    ▼
 client shows a chip or thumbnail in the composer and holds the upload id
    │
-POST /api/chats/:id/messages { content, attachment_ids: [...] }
-   → message_attachments(message_id, upload_id) rows
+POST /api/chats/:id/messages { content, attachment_ids: [...], pdf_engine? }
+   → message_attachments(message_id, upload_id) rows; each PDF records the selected engine
    │
    ▼
 on each generation, the server rebuilds the prompt from the branch path:
@@ -44,6 +43,8 @@ on each generation, the server rebuilds the prompt from the branch path:
      image → read file, base64 → image_url part
      pdf   → read file, base64 → file part (+ cached parse annotations, see below)
      text  → read file → fenced text block
+   select one file-parser engine for this request: request override, else Settings default
+   apply that engine to every uncached PDF included in the prompt
 ```
 
 ## Client-side rules
@@ -53,6 +54,10 @@ on each generation, the server rebuilds the prompt from the branch path:
 - Attachments belong to the message they were sent with. Branches created by
   regenerating reuse them. An **edit** starts with the original message's attachments
   pre-filled in the composer, and they can be removed or added to.
+- The PDF engine selector is one control for the send, not one toggle per attachment.
+  Its effective value is the explicit send override when set, otherwise the Settings
+  default. OpenRouter accepts one parser engine per request, and the selected engine
+  applies to every uncached PDF in the full prompt, including PDFs from earlier messages.
 - Images are downscaled before upload: max 2048 px on the long edge, re-encoded as WebP
   at quality 0.85. GIFs are uploaded as-is so animation survives. Pasted images are named
   `pasted-YYYYMMDD-HHMMSS.png`.
