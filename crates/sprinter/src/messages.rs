@@ -801,3 +801,130 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
         .as_millis() as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{SendMessageRequest, regenerate, send_new_chat, send_to_chat, switch_branch};
+    use crate::db;
+    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+
+    #[tokio::test]
+    async fn edits_regeneration_and_switch_preserve_the_message_tree_and_prompt_path() {
+        let pool = test_pool().await;
+        let first = send_new_chat(&pool, Some("test/chat"), request(None, "original root"))
+            .await
+            .unwrap();
+        assert_eq!(prompt_pairs(&first.prompt), [("user", "original root")]);
+        mark_complete(&pool, &first.assistant_message.id).await;
+
+        let followup = send_to_chat(
+            &pool,
+            &first.chat_id,
+            request(Some(&first.assistant_message.id), "follow up"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            prompt_pairs(&followup.prompt),
+            [
+                ("user", "original root"),
+                ("assistant", ""),
+                ("user", "follow up"),
+            ]
+        );
+        mark_complete(&pool, &followup.assistant_message.id).await;
+
+        let retried = regenerate(&pool, &first.assistant_message.id, Some("test/override"))
+            .await
+            .unwrap();
+        assert_eq!(retried.model, "test/override");
+        assert_eq!(
+            retried.assistant_message.model.as_deref(),
+            Some("test/override")
+        );
+        assert_eq!(prompt_pairs(&retried.prompt), [("user", "original root")]);
+        mark_complete(&pool, &retried.assistant_message.id).await;
+
+        let edited = send_to_chat(&pool, &first.chat_id, request(None, "edited root"))
+            .await
+            .unwrap();
+        assert_eq!(prompt_pairs(&edited.prompt), [("user", "edited root")]);
+        mark_complete(&pool, &edited.assistant_message.id).await;
+
+        // Force a stable ordering even when the test runs within one millisecond.
+        sqlx::query("UPDATE messages SET created_at = 100 WHERE id = ?")
+            .bind(&followup.assistant_message.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE messages SET created_at = 200 WHERE id = ?")
+            .bind(&retried.assistant_message.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let leaf = switch_branch(
+            &pool,
+            &first.chat_id,
+            &first.user_message.as_ref().unwrap().id,
+        )
+        .await
+        .unwrap();
+        assert_eq!(leaf.as_deref(), Some(retried.assistant_message.id.as_str()));
+        let current_leaf = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT current_leaf_id FROM chats WHERE id = ?",
+        )
+        .bind(&first.chat_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(current_leaf.as_deref(), leaf.as_deref());
+
+        let message_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages WHERE chat_id = ?")
+                .bind(&first.chat_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(message_count, 7);
+        pool.close().await;
+    }
+
+    fn request(parent_id: Option<&str>, content: &str) -> SendMessageRequest {
+        SendMessageRequest {
+            parent_id: parent_id.map(str::to_owned),
+            content: content.to_owned(),
+            attachment_ids: Vec::new(),
+            model: None,
+            pdf_engine: None,
+        }
+    }
+
+    fn prompt_pairs(prompt: &[super::PromptMessage]) -> Vec<(&str, &str)> {
+        prompt
+            .iter()
+            .map(|message| (message.role.as_str(), message.content.as_str()))
+            .collect()
+    }
+
+    async fn mark_complete(pool: &SqlitePool, id: &str) {
+        sqlx::query("UPDATE messages SET status = 'complete' WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        db::migrate(&pool).await.unwrap();
+        pool
+    }
+}

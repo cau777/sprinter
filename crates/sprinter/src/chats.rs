@@ -72,6 +72,16 @@ struct UpdateChatRequest {
     model: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct SwitchBranchRequest {
+    message_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SwitchBranchResponse {
+    pub current_leaf_id: String,
+}
+
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/chats", get(list_handler).post(create_handler))
@@ -81,7 +91,34 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .patch(update_handler)
                 .delete(delete_handler),
         )
+        .route(
+            "/api/chats/{id}/switch",
+            axum::routing::post(switch_handler),
+        )
         .route_layer(middleware::from_fn_with_state(state, auth::require_session))
+}
+
+async fn switch_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<SwitchBranchRequest>,
+) -> Result<Json<SwitchBranchResponse>, ChatApiError> {
+    if request.message_id.is_empty() {
+        return Err(ChatApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Choose a message branch",
+        ));
+    }
+    let leaf = crate::messages::switch_branch(&state.pool, &id, &request.message_id)
+        .await
+        .map_err(|error| ChatApiError::from_error(ChatError::Message(error), &headers))?
+        .ok_or_else(|| ChatApiError::not_found(&headers))?;
+    Ok(Json(SwitchBranchResponse {
+        current_leaf_id: leaf,
+    }))
 }
 
 async fn list_handler(
@@ -221,6 +258,7 @@ impl ChatApiError {
     fn from_error(error: ChatError, headers: &HeaderMap) -> Self {
         match error {
             ChatError::NotFound => Self::not_found(headers),
+            ChatError::Message(crate::messages::MessageError::NotFound) => Self::not_found(headers),
             ChatError::InvalidCursor => Self::new(
                 headers,
                 StatusCode::BAD_REQUEST,

@@ -70,10 +70,10 @@ closed, phone locked), the generation keeps running and its result is persisted.
   drop mid-stream) set the message to `error` with a readable message and keep any
   partial content. There are **no automatic retries**. The user clicks Retry, which is
   the same as regenerate.
-- **Context too long:** there's no silent truncation, and OpenRouter's `middle-out`
-  transform is explicitly disabled (`transforms: []`). The error says the conversation is
-  too long for the model and suggests switching to a model with a larger context or
-  starting a new chat.
+- **Context too long:** there's no silent truncation, and OpenRouter's context compression
+  plugin is explicitly disabled (`plugins: [{id: "context-compression", enabled: false}]`).
+  The error says the conversation is too long for the model and suggests switching to a
+  model with a larger context or starting a new chat.
 
 ### Outgoing request shape
 

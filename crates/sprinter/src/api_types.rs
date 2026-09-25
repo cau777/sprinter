@@ -2,7 +2,7 @@ use crate::settings::{
     ApiModel, ModelPricing, ModelsResponse, OpenRouterKeyStatus, SettingsResponse, UploadLimits,
 };
 use crate::{
-    chats::{ChatDetail, ChatPage, ChatSummary},
+    chats::{ChatDetail, ChatPage, ChatSummary, SwitchBranchResponse},
     messages::{
         MessageAttachment, MessageRecord, NewChatMessageResponse, RegenerateMessageResponse,
         SendMessageResponse,
@@ -60,6 +60,10 @@ pub fn export() -> Result<(), Box<dyn Error>> {
         format!("export type ChatSummary = {};", ChatSummary::inline()),
         format!("export type ChatPage = {};", ChatPage::inline()),
         format!("export type ChatDetail = {};", ChatDetail::inline()),
+        format!(
+            "export type SwitchBranchResponse = {};",
+            SwitchBranchResponse::inline()
+        ),
         format!("export type MessageRecord = {};", MessageRecord::inline()),
         format!(
             "export type MessageAttachment = {};",
