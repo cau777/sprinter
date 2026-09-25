@@ -5,9 +5,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error as ThisError;
+use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
+#[derive(Clone, Debug, Serialize, Deserialize, FromRow, TS)]
 pub struct MessageRecord {
     pub id: String,
     pub chat_id: String,
@@ -23,16 +24,19 @@ pub struct MessageRecord {
     pub completion_tokens: Option<i64>,
     pub reasoning_tokens: Option<i64>,
     pub cost: Option<f64>,
+    #[ts(type = "number")]
     pub created_at: i64,
+    #[ts(type = "number")]
     pub updated_at: i64,
     #[sqlx(skip)]
     #[serde(default)]
     pub attachments: Vec<MessageAttachment>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
+#[derive(Clone, Debug, Serialize, Deserialize, FromRow, TS)]
 pub struct MessageAttachment {
     pub upload_id: String,
+    #[ts(type = "number")]
     pub position: i64,
     pub pdf_engine: Option<String>,
     pub parse_cache: Option<String>,
@@ -68,6 +72,10 @@ pub struct PromptMessage {
 #[derive(Clone, Debug, Serialize)]
 pub struct PreparedGeneration {
     pub chat_id: String,
+    /// The chat leaf before this generation moved it to the new assistant message.
+    pub previous_leaf_id: Option<String>,
+    /// True only when this generation created the chat itself.
+    pub created_chat: bool,
     pub user_message: Option<MessageRecord>,
     pub assistant_message: MessageRecord,
     pub model: String,
@@ -177,7 +185,8 @@ pub async fn send_new_chat(
         .bind(now)
         .execute(&mut *tx)
         .await?;
-    let generation = insert_exchange(&mut tx, &id, request, model).await?;
+    let mut generation = insert_exchange(&mut tx, &id, request, model).await?;
+    generation.created_chat = true;
     tx.commit().await?;
     Ok(generation)
 }
@@ -212,6 +221,7 @@ pub async fn regenerate(
         .await?
         .ok_or(MessageError::NotFound)?;
     let model = override_model.unwrap_or(&chat_model).to_owned();
+    let previous_leaf_id = current_leaf(&mut tx, &original.1).await?;
     let parent_id = original.2;
     let assistant_id = Uuid::now_v7().to_string();
     let now = now_ms();
@@ -233,6 +243,8 @@ pub async fn regenerate(
     tx.commit().await?;
     Ok(PreparedGeneration {
         chat_id: original.1,
+        previous_leaf_id,
+        created_chat: false,
         user_message: None,
         assistant_message: assistant,
         model,
@@ -286,6 +298,7 @@ async fn insert_exchange(
     let now = now_ms();
     let user_id = Uuid::now_v7().to_string();
     let assistant_id = Uuid::now_v7().to_string();
+    let previous_leaf_id = current_leaf(tx, chat_id).await?;
     let prompt = prompt_path(tx, chat_id, request.parent_id.as_deref()).await?;
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, created_at, updated_at) \
@@ -323,12 +336,62 @@ async fn insert_exchange(
     });
     Ok(PreparedGeneration {
         chat_id: chat_id.to_owned(),
+        previous_leaf_id,
+        created_chat: false,
         user_message: Some(user_message),
         assistant_message,
         model,
         prompt,
         pdf_engine: request.pdf_engine,
     })
+}
+
+async fn current_leaf(
+    tx: &mut Transaction<'_, Sqlite>,
+    chat_id: &str,
+) -> Result<Option<String>, MessageError> {
+    Ok(
+        sqlx::query_scalar::<_, Option<String>>("SELECT current_leaf_id FROM chats WHERE id = ?")
+            .bind(chat_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .flatten(),
+    )
+}
+
+/// Removes the rows created for a generation that could not be handed to the
+/// generation manager and restores the chat's previous selected leaf.
+pub async fn rollback_generation(
+    pool: &SqlitePool,
+    generation: &PreparedGeneration,
+) -> Result<(), MessageError> {
+    let mut tx = pool.begin().await?;
+    if generation.created_chat {
+        sqlx::query("DELETE FROM chats WHERE id = ?")
+            .bind(&generation.chat_id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        let assistant_id = &generation.assistant_message.id;
+        sqlx::query("DELETE FROM messages WHERE id = ?")
+            .bind(assistant_id)
+            .execute(&mut *tx)
+            .await?;
+        if let Some(user) = &generation.user_message {
+            sqlx::query("DELETE FROM messages WHERE id = ?")
+                .bind(&user.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("UPDATE chats SET current_leaf_id = ?, updated_at = ? WHERE id = ?")
+            .bind(&generation.previous_leaf_id)
+            .bind(now_ms())
+            .bind(&generation.chat_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 async fn validate_parent(

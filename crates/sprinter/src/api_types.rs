@@ -1,6 +1,10 @@
 use crate::settings::{
     ApiModel, ModelPricing, ModelsResponse, OpenRouterKeyStatus, SettingsResponse, UploadLimits,
 };
+use crate::{
+    chats::{ChatDetail, ChatPage, ChatSummary},
+    messages::{MessageAttachment, MessageRecord},
+};
 use serde::Serialize;
 use std::{error::Error, fs, path::PathBuf};
 use ts_rs::TS;
@@ -49,6 +53,14 @@ pub fn export() -> Result<(), Box<dyn Error>> {
         format!(
             "export type SettingsResponse = {};",
             SettingsResponse::inline()
+        ),
+        format!("export type ChatSummary = {};", ChatSummary::inline()),
+        format!("export type ChatPage = {};", ChatPage::inline()),
+        format!("export type ChatDetail = {};", ChatDetail::inline()),
+        format!("export type MessageRecord = {};", MessageRecord::inline()),
+        format!(
+            "export type MessageAttachment = {};",
+            MessageAttachment::inline()
         ),
     ];
     let contents = format!(

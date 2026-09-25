@@ -1,21 +1,46 @@
+use crate::{auth, settings, state::AppState};
+use axum::{
+    Json, Router,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    middleware,
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error as ThisError;
+use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow, TS)]
 pub struct ChatSummary {
     pub id: String,
     pub title: Option<String>,
     pub model: String,
+    #[ts(type = "number")]
     pub updated_at: i64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ChatPage {
     pub items: Vec<ChatSummary>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ChatDetail {
+    pub id: String,
+    pub title: Option<String>,
+    pub title_source: String,
+    pub model: String,
+    pub current_leaf_id: Option<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    pub messages: Vec<crate::messages::MessageRecord>,
 }
 
 #[derive(Debug, ThisError)]
@@ -26,6 +51,186 @@ pub enum ChatError {
     InvalidCursor,
     #[error(transparent)]
     Database(#[from] sqlx::Error),
+    #[error(transparent)]
+    Message(#[from] crate::messages::MessageError),
+}
+
+#[derive(Deserialize)]
+struct ListQuery {
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct CreateChatRequest {
+    model: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateChatRequest {
+    title: Option<String>,
+    model: Option<String>,
+}
+
+pub fn router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/chats", get(list_handler).post(create_handler))
+        .route(
+            "/api/chats/{id}",
+            get(detail_handler)
+                .patch(update_handler)
+                .delete(delete_handler),
+        )
+        .route_layer(middleware::from_fn_with_state(state, auth::require_session))
+}
+
+async fn list_handler(
+    State(state): State<AppState>,
+    Query(query): Query<ListQuery>,
+    headers: HeaderMap,
+) -> Result<Json<ChatPage>, ChatApiError> {
+    Ok(Json(
+        list_chats(
+            &state.pool,
+            query.cursor.as_deref(),
+            query.limit.unwrap_or(50),
+        )
+        .await
+        .map_err(|e| ChatApiError::from_error(e, &headers))?,
+    ))
+}
+
+async fn detail_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ChatDetail>, ChatApiError> {
+    get_chat_detail(&state.pool, &id)
+        .await
+        .map_err(|e| ChatApiError::from_error(e, &headers))?
+        .map(Json)
+        .ok_or_else(|| ChatApiError::not_found(&headers))
+}
+
+async fn create_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateChatRequest>,
+) -> Result<(StatusCode, Json<ChatSummary>), ChatApiError> {
+    let model = match request.model {
+        Some(model) if !model.trim().is_empty() => model,
+        _ => settings::default_model(&state)
+            .await
+            .map_err(|_| ChatApiError::internal(&headers))?
+            .ok_or_else(|| {
+                ChatApiError::new(
+                    &headers,
+                    StatusCode::CONFLICT,
+                    "no_default_model",
+                    "Choose a default model in Settings",
+                )
+            })?,
+    };
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            create_chat(&state.pool, &model)
+                .await
+                .map_err(|e| ChatApiError::from_error(e, &headers))?,
+        ),
+    ))
+}
+
+async fn update_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateChatRequest>,
+) -> Result<Json<ChatSummary>, ChatApiError> {
+    if request.title.is_none() && request.model.is_none() {
+        return Err(ChatApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Provide a title or model to update",
+        ));
+    }
+    Ok(Json(
+        rename_chat(
+            &state.pool,
+            &id,
+            request.title.as_deref(),
+            request.model.as_deref(),
+        )
+        .await
+        .map_err(|e| ChatApiError::from_error(e, &headers))?,
+    ))
+}
+
+async fn delete_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ChatApiError> {
+    delete_chat(&state.pool, &id)
+        .await
+        .map_err(|e| ChatApiError::from_error(e, &headers))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+struct ChatApiError {
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+    request_id: String,
+}
+impl ChatApiError {
+    fn new(
+        headers: &HeaderMap,
+        status: StatusCode,
+        code: &'static str,
+        message: &'static str,
+    ) -> Self {
+        Self {
+            status,
+            code,
+            message,
+            request_id: auth::request_id(headers),
+        }
+    }
+    fn internal(headers: &HeaderMap) -> Self {
+        Self::new(
+            headers,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "An internal error occurred",
+        )
+    }
+    fn not_found(headers: &HeaderMap) -> Self {
+        Self::new(
+            headers,
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Chat not found",
+        )
+    }
+    fn from_error(error: ChatError, headers: &HeaderMap) -> Self {
+        match error {
+            ChatError::NotFound => Self::not_found(headers),
+            ChatError::InvalidCursor => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "invalid_cursor",
+                "Cursor is invalid",
+            ),
+            _ => Self::internal(headers),
+        }
+    }
+}
+impl IntoResponse for ChatApiError {
+    fn into_response(self) -> Response {
+        (self.status, Json(serde_json::json!({"error":{"code":self.code,"message":self.message,"request_id":self.request_id}}))).into_response()
+    }
 }
 
 pub async fn list_chats(
@@ -69,6 +274,42 @@ pub async fn get_chat(pool: &SqlitePool, id: &str) -> Result<Option<ChatSummary>
     .bind(id)
     .fetch_optional(pool)
     .await?)
+}
+
+pub async fn get_chat_detail(pool: &SqlitePool, id: &str) -> Result<Option<ChatDetail>, ChatError> {
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            String,
+            String,
+            Option<String>,
+            i64,
+            i64,
+        ),
+    >(
+        "SELECT id, title, title_source, model, current_leaf_id, created_at, updated_at \
+         FROM chats WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((id, title, title_source, model, current_leaf_id, created_at, updated_at)) = row
+    else {
+        return Ok(None);
+    };
+    let messages = crate::messages::get_chat_messages(pool, &id).await?;
+    Ok(Some(ChatDetail {
+        id,
+        title,
+        title_source,
+        model,
+        current_leaf_id,
+        created_at,
+        updated_at,
+        messages,
+    }))
 }
 
 pub async fn create_chat(pool: &SqlitePool, model: &str) -> Result<ChatSummary, ChatError> {
