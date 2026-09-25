@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = ["crates/sprinter", "crates/fake-openrouter"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+axum = { version = "0.8", features = ["macros"] }
+clap = { version = "4.5", features = ["derive"] }
+http = "1"
+ipnet = "2.11"
+libc = "0.2"
+mimalloc = { version = "0.1", default-features = false }
+rust-embed = "8.7"
+secrecy = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "fs", "time"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["compression-gzip", "limit", "trace"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"] }
+ts-rs = "10"
+ulid = "1"

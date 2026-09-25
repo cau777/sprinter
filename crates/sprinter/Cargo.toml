@@ -1,0 +1,32 @@
+[package]
+name = "sprinter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "sprinter"
+
+[dependencies]
+axum.workspace = true
+clap.workspace = true
+http.workspace = true
+ipnet.workspace = true
+libc.workspace = true
+mimalloc.workspace = true
+rust-embed.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
+thiserror.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+ts-rs.workspace = true
+ulid.workspace = true
+
+[[bin]]
+name = "gen-types"
+path = "src/bin/gen-types.rs"
