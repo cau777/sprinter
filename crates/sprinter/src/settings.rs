@@ -194,6 +194,18 @@ pub async fn default_model(state: &AppState) -> Result<Option<String>, &'static 
         .map_err(|_| "Could not read the default model setting")
 }
 
+pub async fn title_model(state: &AppState) -> Result<Option<String>, &'static str> {
+    setting_string(&state.settings.pool, "title_model")
+        .await
+        .map_err(|_| "Could not read the title model setting")
+}
+
+pub async fn custom_instructions(state: &AppState) -> Result<Option<String>, &'static str> {
+    setting_string(&state.settings.pool, "custom_instructions")
+        .await
+        .map_err(|_| "Could not read custom instructions")
+}
+
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_state = state.clone();
     Router::new()

@@ -1,4 +1,4 @@
-use crate::{auth, settings, state::AppState};
+use crate::{auth, chats, generation, messages, settings, state::AppState};
 use axum::{
     Router,
     body::Body,
@@ -21,6 +21,9 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .merge(auth::router(state.clone()))
         .merge(settings::router(state.clone()))
+        .merge(chats::router(state.clone()))
+        .merge(messages::router(state.clone()))
+        .merge(generation::router(state.clone()))
         .fallback(spa_fallback)
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
         .layer(CompressionLayer::new())

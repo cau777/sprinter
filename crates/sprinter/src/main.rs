@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
-use sprinter::{auth, config, db, logging, state, web};
+use sprinter::{auth, config, db, generation::Manager, logging, state, web};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -65,6 +65,13 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
     let address: SocketAddr = config.bind_address;
     let password = config.master_password.as_ref().expect("checked above");
     auth::initialize_password(&pool, password).await?;
+    let interrupted = Manager::recover_interrupted(&pool).await?;
+    if interrupted > 0 {
+        info!(
+            count = interrupted,
+            "marked unfinished generations as interrupted"
+        );
+    }
     let config = Arc::new(config);
     let app_state = state::AppState::new(pool, config.clone());
     let listener = TcpListener::bind(address).await?;
@@ -74,11 +81,17 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
         insecure_cookies = config.insecure_cookies, openrouter_base_url = %config.openrouter_base_url,
         trusted_proxies = ?config.trusted_proxies,
         key_set = false, "starting");
+    let generation_manager = app_state.generation.clone();
     axum::serve(
         listener,
         web::router(app_state).into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        tokio::spawn(async move {
+            generation_manager.shutdown().await;
+        });
+    })
     .await?;
     info!("stopped");
     Ok(())

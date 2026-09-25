@@ -1,8 +1,12 @@
 pub mod api_types;
 pub mod auth;
+pub mod chats;
 pub mod config;
 pub mod db;
+pub mod generation;
 pub mod logging;
+pub mod messages;
+pub mod openrouter;
 pub mod settings;
 pub mod state;
 pub mod web;

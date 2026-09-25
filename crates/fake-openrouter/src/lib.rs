@@ -232,6 +232,12 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
             (
                 Duration::from_millis(60),
                 sse_data(
+                    json!({"id":"fake-completion","object":"chat.completion.chunk","created":now_secs(),"model":model_name(body),"choices":[{"index":0,"delta":{"content":"Partial reply"},"finish_reason":null}]}),
+                ),
+            ),
+            (
+                Duration::from_millis(60),
+                sse_data(
                     json!({"error":{"message":"Rate limit exceeded","code":429,"metadata":{"provider_name":"Fake"}}}),
                 ),
             ),
