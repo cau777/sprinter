@@ -18,6 +18,7 @@ import { fetchModels, fetchSettings } from "../api/settings";
 import { DefaultModelPicker } from "../components/DefaultModelPicker";
 import { ModelPicker } from "../components/ModelPicker";
 import { siblingsFor, visiblePath } from "./branch";
+import { MarkdownText } from "./MarkdownText";
 
 type Props = { chatId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
@@ -183,7 +184,7 @@ export function ChatInterface({ chatId }: Props) {
               {editing ? <ComposerPrimitive.Root className="composer-card chat-composer chat-edit-composer">
                 <ComposerPrimitive.Input aria-label="Message" placeholder="Edit message…" rows={2} />
                 <div className="composer-toolbar"><span className="enter-hint">Press enter to save</span><div className="composer-right"><ComposerPrimitive.Cancel className="edit-cancel-button">Cancel</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="send-button" aria-label="Save edited message"><ArrowUpRight size={17} /></ComposerPrimitive.Send></div></div>
-              </ComposerPrimitive.Root> : <div className="chat-message-content"><MessagePrimitive.Parts /></div>}
+              </ComposerPrimitive.Root> : <div className="chat-message-content"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div>}
               {!user && item?.generationStatus === "error" && <div className="chat-message-error" role="alert">{item.error ?? "The response could not be completed."}</div>}
               {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="chat-message-state">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
               <div className="chat-message-tools">

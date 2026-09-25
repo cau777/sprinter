@@ -371,3 +371,20 @@ button { color: inherit; }
 }
 @keyframes drawer-in { from { opacity: .6; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+
+/* Rich assistant messages */
+.chat-message-content { overflow-wrap: anywhere; }
+.chat-message-content table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
+.chat-message-content th,.chat-message-content td { padding: 7px 10px; border: 1px solid rgba(140,170,210,.2); text-align: left; }
+.chat-message-content th { color: #dce8f8; background: rgba(120,160,220,.08); }
+.chat-message-content a { color: #80d9ff; text-decoration: underline; text-underline-offset: 2px; }
+.chat-message-content ul,.chat-message-content ol { padding-left: 22px; }
+.chat-message-content input[type="checkbox"] { margin-right: 6px; accent-color: #68d9ff; }
+.markdown-code-header { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border: 1px solid rgba(120,160,220,.16); border-bottom: 0; border-radius: 8px 8px 0 0; background: #101827; color: #8294ac; font: 9px "JetBrains Mono",monospace; text-transform: uppercase; }
+.markdown-code-header button { border: 0; padding: 3px 7px; border-radius: 5px; color: #9fb2ca; background: rgba(120,160,220,.1); font: inherit; cursor: pointer; }
+.markdown-highlight pre,.chat-message-content pre { overflow-x: auto; margin: 0 0 12px; padding: 12px; border: 1px solid rgba(120,160,220,.16); border-radius: 0 0 8px 8px; background: #101827 !important; font: 11px/1.65 "JetBrains Mono",monospace; }
+.markdown-highlight code { font: inherit; }
+.chat-message-content :not(pre) > code { padding: 2px 5px; border-radius: 4px; background: rgba(120,160,220,.1); color: #a8d8f4; font: .9em "JetBrains Mono",monospace; }
+.chat-message-content .katex-display { overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
+.mermaid-diagram { overflow-x: auto; margin: 12px 0; padding: 12px; border: 1px solid rgba(120,160,220,.16); border-radius: 8px; background: #101827; text-align: center; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }
