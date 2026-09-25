@@ -7,7 +7,8 @@ Status: **Decided**
   response is `401`.
 - Mutating requests must send `Content-Type: application/json`, or `X-Sprinter: 1` for
   raw uploads. This is the CSRF defense.
-- Errors are returned as `{ "error": { "code": "snake_case", "message": "Human readable" } }`.
+- Errors are returned as `{ "error": { "code": "snake_case", "message": "Human readable", "request_id": "…" } }`.
+  Every response carries an `X-Request-Id` header (see [13-logging.md](13-logging.md)).
 - List endpoints use cursor pagination: `?cursor=&limit=` returns `{ items, next_cursor }`.
 
 ## Auth
@@ -89,6 +90,12 @@ event: error      data: {"status":"error","message":"Provider returned 429"}
 | PUT | `/api/uploads` | Raw body with the filename in the `X-Filename` header (URL-encoded) and `X-Sprinter: 1`. Streamed to disk. Returns `{id, filename, kind, mime, size}`. Returns `413` if the file is over the limit and `415` for unsupported types. |
 | GET | `/api/uploads/:id` | The file content. Security headers are listed in [02-files.md](02-files.md). |
 | DELETE | `/api/uploads/:id` | Only allowed while the upload isn't attached to anything (removing a chip in the composer). Otherwise returns `409`. |
+
+## Client logging
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/client-log` | `{level, message, stack?, route, app_version}`, at most 8 KB and 20 per minute. Written to the server log (see [13-logging.md](13-logging.md)). |
 
 ## Unauthenticated
 

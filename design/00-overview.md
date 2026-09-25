@@ -52,6 +52,7 @@ model provider.
 | [10-api.md](10-api.md) | HTTP API and SSE protocol | Decided |
 | [11-testing.md](11-testing.md) | E2E (Playwright + fake OpenRouter), backend tests | Decided |
 | [12-implementation-plan.md](12-implementation-plan.md) | Milestones M0–M9, repo layout, risks | Active |
+| [13-logging.md](13-logging.md) | Server logging: files, format, levels, event catalog, redaction | Decided |
 
 ## Open questions
 

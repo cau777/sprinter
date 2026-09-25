@@ -52,8 +52,8 @@ The canonical env var list and `DATA_DIR` layout are in
   `Permissions-Policy` denying the camera, microphone and geolocation.
 - JSON request bodies are capped at 1 MB. Upload bodies are governed by
   [02-files.md](02-files.md).
-- **Logs** never contain message content, file contents, the password, or the API key.
-  Only method, path template, status, latency and IDs are logged.
+- **Logs:** see [13-logging.md](13-logging.md). Secrets are never logged. Message
+  content appears only as truncated previews.
 
 ## Background tasks
 

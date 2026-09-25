@@ -125,6 +125,9 @@ Each test runs in a temp `DATA_DIR` with the in-process fake. They cover only:
   Changing the password invalidates sessions and the stored key.
 - **Spend:** deleting a chat folds its cost into `usage_rollup`, and totals stay the same.
 - **Migrations:** they apply cleanly to an empty DB.
+- **Log redaction:** capture all log output during login, API key save, and a
+  generation. Assert that the password, API key, and session token never appear, and
+  that previews are truncated to 200 characters on a single line.
 
 ## Working agreement
 

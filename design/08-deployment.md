@@ -47,7 +47,8 @@ These go in the README with example Caddy and nginx snippets.
 | `TRUSTED_PROXIES` | _(empty)_ | CIDRs whose `X-Forwarded-For` is trusted |
 | `BACKUP_KEEP` | `7` | Number of daily DB snapshots to keep |
 | `WORKER_THREADS` | `2` | Tokio worker threads |
-| `RUST_LOG` | `info` | Log filter. Logs are written to stdout as JSON. |
+| `RUST_LOG` | `info` | Log level filter for the log files and stdout. See [13-logging.md](13-logging.md). |
+| `LOG_KEEP_DAYS` | `30` | Number of daily log files kept in `DATA_DIR/logs` |
 | `SPRINTER_INSECURE_COOKIES` | `false` | Development only: drops the `Secure` cookie flag for plain-HTTP localhost |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for tests (fake OpenRouter). See [11-testing.md](11-testing.md). |
 
@@ -63,7 +64,7 @@ Sprinter makes sure a plain file copy of that directory is always consistent:
 - Uploads are content-addressed and immutable, and each is written through a temp file
   and an atomic rename. That makes copying `uploads/` inherently safe.
 - **Recommended host backup set:** `backups/` and `uploads/`. The live `sprinter.db*`
-  files can be excluded.
+  files and `logs/` can be excluded.
 - **Restore:** stop the container, copy the chosen snapshot to `sprinter.db`, delete any
   `sprinter.db-wal` and `-shm`, then start the container.
 
@@ -74,6 +75,7 @@ $DATA_DIR/
   sprinter.db, sprinter.db-wal, sprinter.db-shm   # live DB
   backups/sprinter-YYYY-MM-DD.db                  # consistent daily snapshots
   uploads/ab/ab12…                                # content-addressed uploads
+  logs/sprinter.log.YYYY-MM-DD                    # daily text logs (13-logging)
   tmp/                                            # in-progress uploads and snapshots
 ```
 

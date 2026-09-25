@@ -24,6 +24,7 @@ crates/
       openrouter/             # client, SSE parsing, request builder
       uploads/                # streaming store, sniffing, GC
       tasks.rs                # scheduler: GC, sessions, snapshots, model cache
+      logging.rs              # subscriber setup, file rotation, redaction helpers, previews
       web.rs                  # rust-embed, SPA fallback, cache + security headers
   fake-openrouter/            # lib + bin, scenarios (11-testing)
 web/                          # Vite + React SPA
@@ -48,7 +49,11 @@ Sizes are relative: S is about a day of focused work, M is 2–3 days, L is 4 da
 Build the skeleton and settle every open technical unknown before writing features.
 
 - The Cargo workspace. The server serves `web/dist` through `rust-embed` with SPA
-  fallback, plus `/healthz`, config parsing, and JSON logging.
+  fallback, plus `/healthz` and config parsing.
+- The **logging foundation** ([13-logging.md](13-logging.md)): stdout plus a daily
+  rolling file in `DATA_DIR/logs`, the `request` span with request IDs and the
+  `X-Request-Id` header, `secrecy` wrappers, and the one-line escaping of values. Each
+  later milestone adds its events from the catalog as it goes.
 - The web app: Vite, React, TS, Tailwind, HeroUI, TanStack Router and Query, and
   `@fontsource` fonts. The theme tokens from [06-visual.md](06-visual.md) are wired
   into Tailwind and HeroUI.
@@ -88,8 +93,8 @@ Build the skeleton and settle every open technical unknown before writing featur
   state, and redirecting to login on 401.
 - **E2E harness:** Playwright config with the `webServer`s, global setup and both
   projects. Write `auth.spec`.
-- **Backend tests:** rate limit and trusted proxies, and that a password change wipes
-  sessions.
+- **Backend tests:** rate limit and trusted proxies, a password change wiping sessions,
+  and log redaction for the login path.
 - **Done when:** you can log in on desktop and phone, and see the themed shell.
 
 ### M2: OpenRouter setup and models (S)
@@ -186,6 +191,8 @@ This is the heart of the app. Branching is deliberately left for M4.
   `usage_rollup` when a chat is deleted, and `GET /api/usage` with `tz`. The Settings
   usage view shows the balance, totals, by model, by chat, and a daily sparkline.
 - The sessions list and revoke actions in Settings.
+- `POST /api/client-log`, and the client error reporter (global handlers, error
+  boundary, 5xx API failures), with the request ID shown in error toasts.
 - **Backend tests:** the rollup keeps totals the same after a delete.
 - **E2E:** `search`, `export`, `settings`.
 - **Done when:** every Settings section works and past chats are findable.
