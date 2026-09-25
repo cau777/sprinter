@@ -8,6 +8,7 @@ use crate::{
         SendMessageResponse,
     },
     search::SearchResult,
+    usage::{ChatUsage, DailyUsage, ModelUsage, UsagePeriods, UsageResponse, UsageTotals},
 };
 use serde::Serialize;
 use std::{error::Error, fs, path::PathBuf};
@@ -62,6 +63,12 @@ pub fn export() -> Result<(), Box<dyn Error>> {
         format!("export type ChatPage = {};", ChatPage::inline()),
         format!("export type ChatDetail = {};", ChatDetail::inline()),
         format!("export type SearchResult = {};", SearchResult::inline()),
+        format!("export type UsageTotals = {};", UsageTotals::inline()),
+        format!("export type ModelUsage = {};", ModelUsage::inline()),
+        format!("export type ChatUsage = {};", ChatUsage::inline()),
+        format!("export type DailyUsage = {};", DailyUsage::inline()),
+        format!("export type UsagePeriods = {};", UsagePeriods::inline()),
+        format!("export type UsageResponse = {};", UsageResponse::inline()),
         format!(
             "export type SwitchBranchResponse = {};",
             SwitchBranchResponse::inline()

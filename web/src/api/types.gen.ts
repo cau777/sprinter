@@ -26,6 +26,18 @@ export type ChatDetail = { id: string, title: string | null, title_source: strin
 
 export type SearchResult = { chat_id: string, chat_title: string | null, message_id: string | null, snippet: string, rank: number, };
 
+export type UsageTotals = { prompt_tokens: number, completion_tokens: number, cost: number, };
+
+export type ModelUsage = { model: string, prompt_tokens: number, completion_tokens: number, cost: number, };
+
+export type ChatUsage = { chat_id: string, chat_title: string | null, prompt_tokens: number, completion_tokens: number, cost: number, title_cost: number, };
+
+export type DailyUsage = { day: string, cost: number, };
+
+export type UsagePeriods = { today: UsageTotals, d7: UsageTotals, d30: UsageTotals, all: UsageTotals, };
+
+export type UsageResponse = { balance: number | null, totals: UsagePeriods, by_model: Array<ModelUsage>, by_chat: Array<ChatUsage>, daily: Array<DailyUsage>, };
+
 export type SwitchBranchResponse = { current_leaf_id: string, };
 
 export type MessageRecord = { id: string, chat_id: string, parent_id: string | null, role: string, content: string, status: string, error: string | null, model: string | null, generation_id: string | null, finish_reason: string | null, prompt_tokens: number | null, completion_tokens: number | null, reasoning_tokens: number | null, cost: number | null, created_at: number, updated_at: number, attachments: Array<MessageAttachment>, };
