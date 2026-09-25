@@ -245,7 +245,7 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
     }
 
     let reply = match scenario {
-        Scenario::Rich => "| Name | Value |\n| --- | ---: |\n| Sprinter | 1 |\n\n```rust\nfn main() { println!(\"hello\"); }\n```\n\n$E = mc^2$\n\n```mermaid\ngraph TD; A-->B;\n```".to_owned(),
+        Scenario::Rich => "| Name | Value |\n| --- | ---: |\n| Sprinter | 1 |\n\n```rust\nfn main() { println!(\"hello\"); }\n```\n\n$E = mc^2$\n\n```mermaid\ngraph TD; A-->B;\n```\n\n[Sprinter](https://example.com)".to_owned(),
         _ => format!("You said: {}", user_text.replace("[[slow]]", "").replace("[[think]]", "").replace("[[rich]]", "").trim()),
     };
     let parts = if matches!(scenario, Scenario::Slow) {
@@ -271,13 +271,34 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
             "choices":[{"index":0,"delta":{"content":part},"finish_reason":null}]
         }))));
     }
-    out.push((interval, sse_data(json!({
+    let annotations = pdf_annotations(body);
+    let mut final_chunk = json!({
         "id":"fake-completion", "object":"chat.completion.chunk", "created":now_secs(), "model":model_name(body),
         "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
         "usage":{"prompt_tokens":12,"completion_tokens":parts.len() as u64,"total_tokens":12 + parts.len() as u64,"cost":0.0003}
-    }))));
+    });
+    if !annotations.is_empty() {
+        final_chunk["choices"][0]["message"] = json!({"annotations":annotations});
+    }
+    out.push((interval, sse_data(final_chunk)));
     out.push((Duration::ZERO, Event::default().data("[DONE]")));
     out
+}
+
+fn pdf_annotations(body: &Value) -> Vec<Value> {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("file"))
+        .filter_map(|part| part.pointer("/file/filename").and_then(Value::as_str))
+        .map(|name| json!({
+            "type":"file",
+            "file":{"hash":format!("fake-{name}"),"name":name,"content":[{"type":"text","text":format!("Parsed {name}")}]}
+        }))
+        .collect()
 }
 
 fn split_reply(reply: &str, max_chunks: usize) -> Vec<String> {

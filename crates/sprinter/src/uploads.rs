@@ -8,8 +8,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::put,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
 use serde::Serialize;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use std::{
@@ -54,6 +56,165 @@ pub struct UploadRecord {
     pub kind: String,
     pub mime: String,
     pub size: i64,
+}
+
+#[derive(Debug, Error)]
+pub enum PromptExpansionError {
+    #[error("An attached file is no longer available")]
+    Missing,
+    #[error("Attachments in this prompt exceed the configured limit")]
+    TooLarge,
+    #[error("Could not read an attached file")]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
+/// Expand stored upload IDs into the multimodal content parts accepted by
+/// OpenRouter. `needs_pdf_parser` is true when at least one PDF has no cache.
+pub async fn expand_prompt(
+    pool: &SqlitePool,
+    data_dir: &FsPath,
+    prompt: &[crate::messages::PromptMessage],
+    image_support: bool,
+    max_total_bytes: u64,
+) -> Result<(Vec<crate::openrouter::ChatMessage>, bool), PromptExpansionError> {
+    let mut result = Vec::with_capacity(prompt.len());
+    let mut total = 0_u64;
+    let mut needs_pdf_parser = false;
+    for message in prompt {
+        let mut parts = Vec::<Value>::new();
+        if !message.content.is_empty() {
+            parts.push(json!({"type":"text", "text":message.content}));
+        }
+        for upload_id in &message.attachment_ids {
+            let upload = sqlx::query_as::<_, (String, String, String, i64)>(
+                "SELECT sha256, filename, mime, size FROM uploads WHERE id = ?",
+            )
+            .bind(upload_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(PromptExpansionError::Missing)?;
+            let kind: String = sqlx::query_scalar("SELECT kind FROM uploads WHERE id = ?")
+                .bind(upload_id)
+                .fetch_one(pool)
+                .await?;
+            total = total.saturating_add(upload.3.max(0) as u64);
+            if total > max_total_bytes.min(200 * 1024 * 1024) {
+                return Err(PromptExpansionError::TooLarge);
+            }
+            if kind == "image" && !image_support {
+                parts.push(json!({"type":"text", "text":format!(
+                    "[image omitted: {}. The current model can't view images]", upload.1
+                )}));
+                continue;
+            }
+            if kind == "pdf" {
+                let cache: Option<String> = sqlx::query_scalar(
+                    "SELECT parse_cache FROM message_attachments WHERE upload_id = ? AND parse_cache IS NOT NULL LIMIT 1",
+                )
+                .bind(upload_id)
+                .fetch_optional(pool)
+                .await?;
+                if let Some(annotation) =
+                    cache.and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                {
+                    // OpenRouter's annotation object is itself a reusable `file`
+                    // content part and avoids reading or parsing the PDF again.
+                    parts.push(annotation);
+                    continue;
+                }
+                needs_pdf_parser = true;
+            }
+            let bytes = tokio::fs::read(content_path(data_dir, &upload.0)).await?;
+            match kind.as_str() {
+                "image" => parts.push(json!({
+                    "type":"image_url",
+                    "image_url":{"url":format!("data:{};base64,{}", upload.2, STANDARD.encode(bytes))}
+                })),
+                "pdf" => {
+                    let file = json!({"filename":upload.1,"file_data":format!("data:application/pdf;base64,{}", STANDARD.encode(bytes))});
+                    parts.push(json!({"type":"file", "file":file}));
+                }
+                "text" => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    let fence_len = text
+                        .split('\n')
+                        .map(|line| line.chars().take_while(|c| *c == '`').count())
+                        .max()
+                        .unwrap_or(0)
+                        .max(2)
+                        + 1;
+                    let fence = "`".repeat(fence_len);
+                    let label = upload.1.rsplit('.').next().unwrap_or("");
+                    parts.push(json!({"type":"text", "text":format!(
+                        "Attached file: {}\n{}{}\n{}\n{}", upload.1, fence, label, text, fence
+                    )}));
+                }
+                _ => return Err(PromptExpansionError::Missing),
+            }
+        }
+        let content = if message.attachment_ids.is_empty() {
+            Value::String(message.content.clone())
+        } else {
+            Value::Array(parts)
+        };
+        result.push(crate::openrouter::ChatMessage {
+            role: message.role.clone(),
+            content,
+        });
+    }
+    Ok((result, needs_pdf_parser))
+}
+
+pub async fn cache_pdf_annotations(
+    pool: &SqlitePool,
+    prompt: &[crate::messages::PromptMessage],
+    annotations: &[Value],
+) -> Result<(), sqlx::Error> {
+    let mut pdfs = Vec::<(String, String, String)>::new();
+    for id in prompt
+        .iter()
+        .flat_map(|message| message.attachment_ids.iter())
+    {
+        if pdfs.iter().any(|(seen, _, _)| seen == id) {
+            continue;
+        }
+        if let Some((sha, filename, kind)) = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT sha256, filename, kind FROM uploads WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        {
+            if kind == "pdf" {
+                pdfs.push((id.clone(), sha, filename));
+            }
+        }
+    }
+    for (index, annotation) in annotations.iter().enumerate() {
+        let file = annotation.get("file").unwrap_or(annotation);
+        let sha = file.get("hash").and_then(Value::as_str);
+        let name = file
+            .get("name")
+            .or_else(|| file.get("filename"))
+            .and_then(Value::as_str);
+        let target = pdfs
+            .iter()
+            .find(|(_, digest, filename)| {
+                sha == Some(digest.as_str()) || name == Some(filename.as_str())
+            })
+            .or_else(|| (pdfs.len() == annotations.len()).then(|| &pdfs[index]));
+        if let Some((upload_id, _, _)) = target {
+            let encoded = serde_json::to_string(annotation).expect("JSON values serialize");
+            sqlx::query("UPDATE message_attachments SET parse_cache = ? WHERE upload_id = ?")
+                .bind(encoded)
+                .bind(upload_id)
+                .execute(pool)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Error)]
@@ -881,6 +1042,107 @@ mod tests {
                 .unwrap(),
             0
         );
+        pool.close().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompt_expansion_builds_image_pdf_text_parts_and_vision_placeholder() {
+        let (pool, root) = setup().await;
+        let image = store_stream(
+            &pool,
+            &root,
+            "photo.webp",
+            chunks(b"RIFF\x00\x00\x00\x00WEBPpicture".to_vec()),
+        )
+        .await
+        .unwrap();
+        let pdf = store_stream(&pool, &root, "scan.pdf", chunks(b"%PDF-1.7 fake".to_vec()))
+            .await
+            .unwrap();
+        let text = store_stream(&pool, &root, "notes.md", chunks(b"hello `world`".to_vec()))
+            .await
+            .unwrap();
+        let prompt = [crate::messages::PromptMessage {
+            role: "user".into(),
+            content: "Summarize these".into(),
+            attachment_ids: vec![image.id.clone(), pdf.id.clone(), text.id.clone()],
+        }];
+        let (expanded, needs_parser) = expand_prompt(&pool, &root, &prompt, true, 1024 * 1024)
+            .await
+            .unwrap();
+        let parts = expanded[0].content.as_array().unwrap();
+        assert_eq!(parts[0]["text"], "Summarize these");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert!(
+            parts[1]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/webp;base64,")
+        );
+        assert_eq!(parts[2]["type"], "file");
+        assert!(
+            parts[2]["file"]["file_data"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:application/pdf;base64,")
+        );
+        assert!(
+            parts[3]["text"]
+                .as_str()
+                .unwrap()
+                .contains("```md\nhello `world`\n```")
+        );
+        assert!(needs_parser);
+
+        let (without_vision, _) = expand_prompt(&pool, &root, &prompt, false, 1024 * 1024)
+            .await
+            .unwrap();
+        let parts = without_vision[0].content.as_array().unwrap();
+        assert!(
+            parts[1]["text"]
+                .as_str()
+                .unwrap()
+                .contains("image omitted: photo.webp")
+        );
+        assert_eq!(parts[2]["type"], "file");
+
+        assert!(matches!(
+            expand_prompt(&pool, &root, &prompt, true, 2).await,
+            Err(PromptExpansionError::TooLarge)
+        ));
+        pool.close().await;
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn parsed_pdf_annotations_are_cached_and_sent_back_on_later_prompts() {
+        let (pool, root) = setup().await;
+        let pdf = store_stream(&pool, &root, "scan.pdf", chunks(b"%PDF-1.7 fake".to_vec()))
+            .await
+            .unwrap();
+        let sha: String = sqlx::query_scalar("SELECT sha256 FROM uploads WHERE id = ?")
+            .bind(&pdf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO chats(id, model, created_at, updated_at) VALUES('cache-chat', 'test/chat', 1, 1)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO messages(id, chat_id, role, content, status, created_at, updated_at) VALUES('cache-message', 'cache-chat', 'user', 'read this', 'complete', 1, 1)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO message_attachments(message_id, upload_id, position) VALUES('cache-message', ?, 0)").bind(&pdf.id).execute(&pool).await.unwrap();
+        let prompt = [crate::messages::PromptMessage {
+            role: "user".into(),
+            content: "read this".into(),
+            attachment_ids: vec![pdf.id.clone()],
+        }];
+        let annotation = json!({"type":"file", "file":{"hash":sha,"name":"scan.pdf","content":[{"type":"text","text":"parsed"}]}});
+        cache_pdf_annotations(&pool, &prompt, std::slice::from_ref(&annotation))
+            .await
+            .unwrap();
+        let (expanded, needs_parser) = expand_prompt(&pool, &root, &prompt, true, 1024)
+            .await
+            .unwrap();
+        assert!(!needs_parser);
+        assert_eq!(expanded[0].content[1], annotation);
         pool.close().await;
         fs::remove_dir_all(root).unwrap();
     }

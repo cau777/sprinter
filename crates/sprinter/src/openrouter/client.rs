@@ -7,7 +7,7 @@ use std::{pin::Pin, time::Duration};
 #[derive(Clone, Debug)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: Value,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -21,6 +21,7 @@ pub struct ProviderUsage {
 #[derive(Clone, Debug)]
 pub enum ProviderEvent {
     Delta(String),
+    Annotations(Value),
     Done {
         finish_reason: Option<String>,
         usage: Option<ProviderUsage>,
@@ -84,6 +85,7 @@ impl OpenRouterClient {
         let output = try_stream! {
             let mut buffer = String::new();
             let mut finish_reason: Option<String> = None;
+            let mut final_usage: Option<ProviderUsage> = None;
             let mut done_sent = false;
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|_| ProviderError {
@@ -96,7 +98,7 @@ impl OpenRouterClient {
                     if let Some(data) = frame_data(&frame) {
                         if data.trim() == "[DONE]" {
                             if !done_sent {
-                                yield ProviderEvent::Done { finish_reason: finish_reason.take(), usage: None };
+                                yield ProviderEvent::Done { finish_reason: finish_reason.take(), usage: final_usage.take() };
                                 done_sent = true;
                             }
                             continue;
@@ -116,9 +118,17 @@ impl OpenRouterClient {
                         if let Some(content) = choice.and_then(|c| c.pointer("/delta/content")).and_then(Value::as_str) {
                             if !content.is_empty() { yield ProviderEvent::Delta(content.to_owned()); }
                         }
+                        if let Some(annotations) = choice
+                            .and_then(|c| c.pointer("/message/annotations").or_else(|| c.pointer("/delta/annotations")))
+                        {
+                            if let Some(items) = annotations.as_array() {
+                                for item in items { yield ProviderEvent::Annotations(item.clone()); }
+                            } else {
+                                yield ProviderEvent::Annotations(annotations.clone());
+                            }
+                        }
                         if let Some(usage) = value.get("usage") {
-                            yield ProviderEvent::Done { finish_reason: finish_reason.take(), usage: parse_usage(usage) };
-                            done_sent = true;
+                            final_usage = parse_usage(usage);
                         }
                     }
                 }
@@ -127,7 +137,7 @@ impl OpenRouterClient {
                 if !buffer.trim().is_empty() {
                     if let Some(data) = frame_data(&buffer) {
                         if data.trim() == "[DONE]" {
-                            yield ProviderEvent::Done { finish_reason: finish_reason.take(), usage: None };
+                            yield ProviderEvent::Done { finish_reason: finish_reason.take(), usage: final_usage.take() };
                             done_sent = true;
                         }
                     }
@@ -148,9 +158,9 @@ impl OpenRouterClient {
     ) -> Result<String, ProviderError> {
         let messages = [ChatMessage {
             role: "user".into(),
-            content: format!(
+            content: Value::String(format!(
                 "Write a concise title for this conversation. Reply with only the title.\n\n{user_text}"
-            ),
+            )),
         }];
         let response = self
             .http
@@ -263,6 +273,7 @@ mod tests {
     use fake_openrouter::FakeOpenRouter;
     use futures_util::StreamExt;
     use secrecy::SecretString;
+    use serde_json::{Value, json};
     use tokio::net::TcpListener;
 
     #[tokio::test]
@@ -277,7 +288,7 @@ mod tests {
         let client = OpenRouterClient::new(format!("http://{address}/api/v1"));
         let messages = [ChatMessage {
             role: "user".into(),
-            content: "protocol check".into(),
+            content: Value::String("protocol check".into()),
         }];
         let mut stream = client
             .stream_chat(
@@ -294,6 +305,7 @@ mod tests {
         while let Some(event) = stream.next().await {
             match event.unwrap() {
                 ProviderEvent::Delta(content) => deltas.push_str(&content),
+                ProviderEvent::Annotations(_) => {}
                 ProviderEvent::Done { usage, .. } => {
                     cost = usage.and_then(|usage| usage.cost);
                     finished = true;
@@ -331,7 +343,7 @@ mod tests {
         let client = OpenRouterClient::new(format!("http://{address}/api/v1"));
         let messages = [ChatMessage {
             role: "user".into(),
-            content: "[[error]]".into(),
+            content: Value::String("[[error]]".into()),
         }];
         let mut stream = client
             .stream_chat(
@@ -353,6 +365,47 @@ mod tests {
         assert!(deltas);
         assert_eq!(error.status, Some(429));
         assert!(error.message.contains("rate limited"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn pdf_content_part_is_sent_and_stream_annotations_are_emitted() {
+        let fake = FakeOpenRouter::new();
+        let requests = fake.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, fake.router()).await.unwrap();
+        });
+        let client = OpenRouterClient::new(format!("http://{address}/api/v1"));
+        let messages = [ChatMessage {
+            role: "user".into(),
+            content: json!([{"type":"file","file":{"filename":"scan.pdf","file_data":"data:application/pdf;base64,JVBERg=="}}]),
+        }];
+        let mut stream = client
+            .stream_chat(
+                &SecretString::from("test-key"),
+                "test/text",
+                &messages,
+                Some("cloudflare-ai"),
+            )
+            .await
+            .unwrap();
+        let mut annotations = Vec::new();
+        while let Some(event) = stream.next().await {
+            if let ProviderEvent::Annotations(annotation) = event.unwrap() {
+                annotations.push(annotation);
+            }
+        }
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0]["file"]["name"], "scan.pdf");
+        let request = requests
+            .requests_snapshot()
+            .into_iter()
+            .find(|request| request.path == "/api/v1/chat/completions")
+            .unwrap();
+        assert_eq!(request.body["messages"][0]["content"][0]["type"], "file");
+        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "cloudflare-ai");
         server.abort();
     }
 }

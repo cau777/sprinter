@@ -333,6 +333,36 @@ impl MessageApiError {
                 "empty_content",
                 "Message content cannot be empty",
             ),
+            MessageError::ContentTooLarge => Self::new(
+                headers,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "message_too_large",
+                "Message content exceeds 256 KB",
+            ),
+            MessageError::InvalidAttachments => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "invalid_attachments",
+                "One or more attachments are invalid",
+            ),
+            MessageError::TooManyAttachments => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "too_many_attachments",
+                "This message exceeds the file count limit",
+            ),
+            MessageError::PromptTooLarge => Self::new(
+                headers,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "attachments_too_large",
+                "Attachments in this prompt exceed the configured limit",
+            ),
+            MessageError::InvalidPdfEngine => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "invalid_pdf_engine",
+                "The PDF parser engine is invalid",
+            ),
             MessageError::GenerationInProgress => Self::new(
                 headers,
                 StatusCode::CONFLICT,
@@ -394,6 +424,16 @@ pub enum MessageError {
     InvalidMessage,
     #[error("message content cannot be empty")]
     EmptyContent,
+    #[error("message content exceeds 256 KB")]
+    ContentTooLarge,
+    #[error("one or more attachments are invalid")]
+    InvalidAttachments,
+    #[error("message has too many attachments")]
+    TooManyAttachments,
+    #[error("attachments exceed the prompt size limit")]
+    PromptTooLarge,
+    #[error("PDF parser engine is invalid")]
+    InvalidPdfEngine,
     #[error("a generation is already active in this chat")]
     GenerationInProgress,
     #[error("default model is not configured")]
@@ -442,9 +482,7 @@ pub async fn send_to_chat(
     chat_id: &str,
     request: SendMessageRequest,
 ) -> Result<PreparedGeneration, MessageError> {
-    if request.content.trim().is_empty() {
-        return Err(MessageError::EmptyContent);
-    }
+    validate_message_content(&request.content)?;
     let mut tx = pool.begin().await?;
     acquire_chat_write_lock(&mut tx, chat_id).await?;
     let chat_model = sqlx::query_scalar::<_, String>("SELECT model FROM chats WHERE id = ?")
@@ -465,9 +503,7 @@ pub async fn send_new_chat(
     default_model: Option<&str>,
     request: SendMessageRequest,
 ) -> Result<PreparedGeneration, MessageError> {
-    if request.content.trim().is_empty() {
-        return Err(MessageError::EmptyContent);
-    }
+    validate_message_content(&request.content)?;
     if request.parent_id.is_some() {
         return Err(MessageError::InvalidParent);
     }
@@ -596,11 +632,23 @@ async fn insert_exchange(
     request: SendMessageRequest,
     model: String,
 ) -> Result<PreparedGeneration, MessageError> {
+    if request
+        .pdf_engine
+        .as_deref()
+        .is_some_and(|engine| !matches!(engine, "cloudflare-ai" | "mistral-ocr" | "native"))
+    {
+        return Err(MessageError::InvalidPdfEngine);
+    }
     let now = now_ms();
     let user_id = Uuid::now_v7().to_string();
     let assistant_id = Uuid::now_v7().to_string();
     let previous_leaf_id = current_leaf(tx, chat_id).await?;
     let prompt = prompt_path(tx, chat_id, request.parent_id.as_deref()).await?;
+    let attachment_kinds = validate_attachments(tx, &prompt, &request.attachment_ids).await?;
+    let stored_pdf_engine = request
+        .pdf_engine
+        .clone()
+        .or(read_default_pdf_engine(tx).await?);
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, created_at, updated_at) \
          VALUES(?, ?, ?, 'user', ?, 'complete', ?, ?)",
@@ -608,7 +656,8 @@ async fn insert_exchange(
         .execute(&mut **tx).await?;
     for (position, upload_id) in request.attachment_ids.iter().enumerate() {
         sqlx::query("INSERT INTO message_attachments(message_id, upload_id, position, pdf_engine) VALUES(?, ?, ?, ?)")
-            .bind(&user_id).bind(upload_id).bind(position as i64).bind(&request.pdf_engine)
+            .bind(&user_id).bind(upload_id).bind(position as i64)
+            .bind(if attachment_kinds.get(upload_id).map(String::as_str) == Some("pdf") { stored_pdf_engine.as_deref() } else { None })
             .execute(&mut **tx).await?;
     }
     sqlx::query(
@@ -645,6 +694,71 @@ async fn insert_exchange(
         prompt,
         pdf_engine: request.pdf_engine,
     })
+}
+
+fn validate_message_content(content: &str) -> Result<(), MessageError> {
+    if content.trim().is_empty() {
+        return Err(MessageError::EmptyContent);
+    }
+    if content.len() > 256 * 1024 {
+        return Err(MessageError::ContentTooLarge);
+    }
+    Ok(())
+}
+
+async fn validate_attachments(
+    tx: &mut Transaction<'_, Sqlite>,
+    prompt: &[PromptMessage],
+    new_ids: &[String],
+) -> Result<HashMap<String, String>, MessageError> {
+    if new_ids.len() > 20 {
+        return Err(MessageError::TooManyAttachments);
+    }
+    let mut kinds = HashMap::new();
+    let mut total = 0_u64;
+    for id in prompt
+        .iter()
+        .flat_map(|message| message.attachment_ids.iter())
+        .chain(new_ids)
+    {
+        let (kind, size) =
+            sqlx::query_as::<_, (String, i64)>("SELECT kind, size FROM uploads WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&mut **tx)
+                .await?
+                .ok_or(MessageError::InvalidAttachments)?;
+        total = total.saturating_add(size.max(0) as u64);
+        if new_ids.contains(id) {
+            kinds.insert(id.clone(), kind);
+        }
+    }
+    let raw_limits: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'upload_limits'")
+            .fetch_optional(&mut **tx)
+            .await?;
+    let limits = raw_limits
+        .and_then(|value| serde_json::from_str::<settings::UploadLimits>(&value).ok())
+        .unwrap_or_default();
+    if new_ids.len() as u64 > limits.files_per_message.min(20) {
+        return Err(MessageError::TooManyAttachments);
+    }
+    if total > limits.total_prompt_bytes.min(200 * 1024 * 1024) {
+        return Err(MessageError::PromptTooLarge);
+    }
+    if kinds.len() != new_ids.len() {
+        return Err(MessageError::InvalidAttachments);
+    }
+    Ok(kinds)
+}
+
+async fn read_default_pdf_engine(
+    tx: &mut Transaction<'_, Sqlite>,
+) -> Result<Option<String>, MessageError> {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'pdf_engine'")
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(raw.and_then(|value| serde_json::from_str(&value).ok()))
 }
 
 async fn current_leaf(
@@ -886,6 +1000,63 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(message_count, 7);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn send_validates_attachment_limits_and_records_the_effective_pdf_engine() {
+        let pool = test_pool().await;
+        let limits = serde_json::json!({
+            "image_bytes": 1024, "pdf_bytes": 1024, "text_bytes": 1024,
+            "files_per_message": 1, "total_prompt_bytes": 2048
+        });
+        sqlx::query("INSERT INTO settings(key, value, updated_at) VALUES('upload_limits', ?, 1)")
+            .bind(serde_json::to_string(&limits).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO settings(key, value, updated_at) VALUES('pdf_engine', ?, 1)")
+            .bind(serde_json::to_string("mistral-ocr").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, filename) in [("upload-one", "one.pdf"), ("upload-two", "two.pdf")] {
+            sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at) VALUES(?, ?, ?, 'application/pdf', 'pdf', 100, 1)")
+                .bind(id).bind(id.repeat(32)).bind(filename).execute(&pool).await.unwrap();
+        }
+        let mut invalid = request(None, "hi");
+        invalid.attachment_ids.push("missing-upload".into());
+        assert!(matches!(
+            send_new_chat(&pool, Some("test/chat"), invalid).await,
+            Err(super::MessageError::InvalidAttachments)
+        ));
+
+        let mut too_many = request(None, "hi");
+        too_many.attachment_ids = vec!["upload-one".into(), "upload-two".into()];
+        assert!(matches!(
+            send_new_chat(&pool, Some("test/chat"), too_many).await,
+            Err(super::MessageError::TooManyAttachments)
+        ));
+
+        let mut valid = request(None, "hi");
+        valid.attachment_ids.push("upload-one".into());
+        let prepared = send_new_chat(&pool, Some("test/chat"), valid)
+            .await
+            .unwrap();
+        assert_eq!(prepared.prompt[0].attachment_ids, ["upload-one"]);
+        let engine: Option<String> = sqlx::query_scalar(
+            "SELECT pdf_engine FROM message_attachments WHERE upload_id = 'upload-one'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(engine.as_deref(), Some("mistral-ocr"));
+
+        let oversized = request(None, &"x".repeat(256 * 1024 + 1));
+        assert!(matches!(
+            send_new_chat(&pool, Some("test/chat"), oversized).await,
+            Err(super::MessageError::ContentTooLarge)
+        ));
         pool.close().await;
     }
 

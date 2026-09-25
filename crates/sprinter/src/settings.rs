@@ -206,6 +206,49 @@ pub async fn custom_instructions(state: &AppState) -> Result<Option<String>, &'s
         .map_err(|_| "Could not read custom instructions")
 }
 
+/// Returns cached OpenRouter modality support when the model record is available.
+/// Unknown models are treated as non-vision by callers so existing image history
+/// stays visible as a placeholder until model metadata can be refreshed.
+pub async fn model_supports_images(state: &AppState, model: &str) -> Option<bool> {
+    let Json(response) = get_models_inner(state.settings.clone(), RefreshQuery { refresh: None })
+        .await
+        .ok()?;
+    response
+        .items
+        .iter()
+        .find(|item| item.id == model)
+        .map(|item| item.input_modalities.iter().any(|m| m == "image"))
+}
+
+/// Force a model catalog refresh for the background maintenance task.
+pub async fn refresh_models(state: &AppState) -> Result<usize, &'static str> {
+    let Json(response) = get_models_inner(
+        state.settings.clone(),
+        RefreshQuery {
+            refresh: Some(true),
+        },
+    )
+    .await
+    .map_err(|error| error.message)?;
+    Ok(response.items.len())
+}
+
+pub async fn default_pdf_engine(state: &AppState) -> Result<String, &'static str> {
+    Ok(setting_value(&state.settings.pool, "pdf_engine")
+        .await
+        .map_err(|_| "Could not read the PDF engine setting")?
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "cloudflare-ai".to_owned()))
+}
+
+pub async fn upload_limits(state: &AppState) -> Result<UploadLimits, &'static str> {
+    Ok(setting_value(&state.settings.pool, "upload_limits")
+        .await
+        .map_err(|_| "Could not read upload limits")?
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default())
+}
+
 pub fn router(state: AppState) -> Router<AppState> {
     let auth_state = state.clone();
     Router::new()
