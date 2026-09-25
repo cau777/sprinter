@@ -7,6 +7,7 @@ use crate::{
         MessageAttachment, MessageRecord, NewChatMessageResponse, RegenerateMessageResponse,
         SendMessageResponse,
     },
+    search::SearchResult,
 };
 use serde::Serialize;
 use std::{error::Error, fs, path::PathBuf};
@@ -60,6 +61,7 @@ pub fn export() -> Result<(), Box<dyn Error>> {
         format!("export type ChatSummary = {};", ChatSummary::inline()),
         format!("export type ChatPage = {};", ChatPage::inline()),
         format!("export type ChatDetail = {};", ChatDetail::inline()),
+        format!("export type SearchResult = {};", SearchResult::inline()),
         format!(
             "export type SwitchBranchResponse = {};",
             SwitchBranchResponse::inline()

@@ -1,4 +1,7 @@
-use crate::{auth, chats, generation, messages, settings, state::AppState, uploads};
+use crate::{
+    auth, chats, client_log, exports, generation, messages, search, settings, state::AppState,
+    uploads,
+};
 use axum::{
     Router,
     body::Body,
@@ -23,8 +26,11 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::router(state.clone()))
         .merge(settings::router(state.clone()))
         .merge(chats::router(state.clone()))
+        .merge(exports::router(state.clone()))
         .merge(messages::router(state.clone()))
         .merge(generation::router(state.clone()))
+        .merge(search::router(state.clone()))
+        .merge(client_log::router(state.clone()))
         .layer(RequestBodyLimitLayer::new(1024 * 1024));
     Router::new()
         .route("/healthz", get(healthz))
