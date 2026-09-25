@@ -80,8 +80,9 @@ closed, phone locked), the generation keeps running and its result is persisted.
 - `model`: the chat's current model, or the model picked in the regenerate menu.
 - `messages`: the global custom instructions (if any) as `system`, then the root-to-leaf
   path, with attachments expanded as described in [02-files.md](02-files.md).
-- `stream: true`, `reasoning: { exclude: true }`, and `usage: { include: true }`.
-- The PDF `file-parser` plugin with the engine chosen for each attachment.
+- `stream: true` and `reasoning: { exclude: true }`. OpenRouter always returns usage;
+  the streaming final chunk includes it alongside a final choice and `finish_reason`.
+- The PDF `file-parser` plugin with a request-level engine setting (see [02-files.md](02-files.md)).
 - Headers `HTTP-Referer: https://github.com/cau777/sprinter` and `X-Title: Sprinter`,
   for OpenRouter app attribution.
 - **Model can't see images:** if the target model lacks image input but the path
@@ -123,19 +124,43 @@ possible.
 
 ## OpenRouter protocol spike (2026-09-25)
 
-Checked the live official `GET https://openrouter.ai/api/v1/models` response. It returns
-`{"data":[...]}` and model records expose `id`, `name`, `context_length`, `pricing`,
-`architecture.input_modalities` and `architecture.output_modalities`, matching the model
-metadata we use. The official `/api/v1/credits` endpoint rejected an unauthenticated
-request with HTTP 401 and `{"error":{"message":"No cookie auth credentials found","code":401}}`.
-The live model-list endpoint and the OpenRouter docs navigation confirmed the current
-endpoint paths. The docs page exposes the chat-completion and credits reference pages,
-but direct retrieval of those reference pages was unavailable in this environment.
+Checked the current official documentation index and API reference at
+`https://openrouter.ai/docs/llms.txt` and its linked Markdown pages, plus the live
+`GET https://openrouter.ai/api/v1/models` endpoint. The live endpoint returns
+`{"data":[...]}` and model records expose `id`, `name`, `context_length`, `pricing`, and
+`architecture.input_modalities` / `output_modalities`.
 
-The fake therefore follows the observed models envelope and uses the designed
-OpenAI-compatible streaming shape: `data:` chat-completion chunks, a final chunk with
-`finish_reason` and `usage`, then `data: [DONE]`. OpenRouter-specific request flags, PDF parsing and detailed provider
-error variants (including `usage.include`, reasoning exclusion, transforms, annotations,
-and context-length errors) remain unverified from the current reference text and should
-be revisited if the official docs become directly retrievable. Fake usage includes
-`usage.cost` as required by our caller contract.
+- Usage is always returned. The current API marks `stream_options.include_usage` as
+  deprecated with no effect; `usage: {include: true}` is not the current request shape.
+  The streaming final chunk contains a content-free choice repeating `finish_reason`
+  and a `usage` object. `usage.cost` is optional, so the client must handle its absence.
+- `GET /api/v1/credits` returns `data.total_credits` and `data.total_usage`, but now
+  requires a Management API key. `GET /api/v1/key` uses the regular API key and returns
+  `data.limit`, `limit_remaining`, `limit_reset`, and usage fields. A direct unauthenticated
+  `/credits` call returned HTTP 401.
+- `reasoning: {exclude: true}` is documented and omits reasoning text from the response.
+  Reasoning still counts toward usage when generated.
+- The current no-compression control is
+  `plugins: [{id: "context-compression", enabled: false}]`. OpenRouter says compression
+  defaults on for models with 8k context or less. The older `transforms: []` control is
+  absent from the current chat request schema.
+- PDF parsing uses `plugins: [{id: "file-parser", pdf: {engine: "cloudflare-ai"}}]`;
+  documented engines are `cloudflare-ai`, `mistral-ocr`, and `native`. Parsed file
+  annotations are documented in non-streaming assistant messages and provider-error
+  metadata. The current docs do not specify how annotations are delivered in streaming
+  responses, so the v1 streaming parse-cache path remains unverified.
+- Errors use an `error` object with `code`, `message`, and optional `metadata`. The
+  current canonical error types include `context_length_exceeded`, `authentication`,
+  `payment_required`, and `rate_limit_exceeded`; common corresponding HTTP statuses are
+  401, 402, and 429. Mid-stream errors arrive as SSE chunks after HTTP 200 is committed.
+
+The fake follows the observed models envelope and stream framing (`data:` chunks and
+`data: [DONE]`), and returns `usage.cost` for deterministic spend tests.
+
+Sources: [chat completion reference](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion.md),
+[streaming guide](https://openrouter.ai/docs/api_reference/streaming.md),
+[credits endpoint](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits.md),
+[key endpoint](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key.md),
+[reasoning tokens](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens.md),
+[message transforms](https://openrouter.ai/docs/guides/features/message-transforms.md), and
+[PDF inputs](https://openrouter.ai/docs/guides/overview/multimodal/pdfs.md).

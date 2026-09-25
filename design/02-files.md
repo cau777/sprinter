@@ -147,3 +147,14 @@ Possible v2 uses:
   with no references are deleted along with their files (within the same maintenance
   sweep).
 - A periodic sweep (hourly) runs both of these and also removes stale `tmp/` files.
+
+## OpenRouter PDF protocol spike (2026-09-25)
+
+The current official [PDF Inputs guide](https://openrouter.ai/docs/guides/overview/multimodal/pdfs.md)
+uses `plugins: [{id: "file-parser", pdf: {engine: "cloudflare-ai"}}]`; the supported
+engines are `cloudflare-ai`, `mistral-ocr`, and `native`. The engine is a request-level
+plugin option, not a field on an individual `file` content part. PDF annotations appear
+in non-streaming assistant messages as `choices[0].message.annotations`, and parsed
+annotations from provider failures appear at `error.metadata.file_annotations`. The
+current docs do not specify annotations on streaming responses; the planned cache needs
+an implementation spike before it can rely on the streaming reply to provide them.

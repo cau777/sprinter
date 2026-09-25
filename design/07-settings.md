@@ -24,11 +24,13 @@ in v1. Requests use OpenRouter and provider defaults.
 
 ## Usage and spend view
 
-- **Balance:** remaining OpenRouter credits, fetched live from OpenRouter's credits/key
-  endpoint and cached for about a minute.
+- **Balance:** per-key `limit_remaining` from `GET /api/v1/key`, cached for about a
+  minute. OpenRouter's `GET /api/v1/credits` returns the account's total purchased and
+  used credits but requires a separate Management API key, which v1 does not request.
+  When the regular API key has no spend limit (`limit_remaining: null`), show the balance
+  as unavailable instead of presenting the account-wide credit balance.
 - **Spend:** aggregated from the per-message `cost` and token counts we store. OpenRouter
-  returns these in the final streamed chunk's `usage`; confirm during implementation
-  whether this needs `usage: {include: true}`.
+  always returns usage, including in the final streamed chunk; `cost` is optional.
   - Totals for today, the last 7 days, the last 30 days, and all time.
   - Breakdown **by model** and **by chat** (top N), with a daily spend sparkline.
   - Title-generation spend is included, attributed to the chat with a `title` source tag.
