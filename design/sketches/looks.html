@@ -1,0 +1,369 @@
+<title>Sprinter Looks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=Manrope:wght@400;600&family=JetBrains+Mono:wght@400&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=DM+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;600&family=VT323&family=Instrument+Serif:ital@0;1&family=Newsreader:opsz,wght@6..72,400&family=Instrument+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  color-scheme: dark;
+  --bg:#111214; --fg:#e7e7ea; --muted:#8d8f98; --line:#26272c;
+  --ui:"Instrument Sans", system-ui, sans-serif;
+}
+html{background:var(--bg)}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--ui);padding:48px 20px 80px}
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:64px}
+.intro h1{font:600 28px/1.2 var(--ui);margin:0 0 8px;letter-spacing:-.01em;text-wrap:balance}
+.intro p{margin:0;color:var(--muted);max-width:62ch}
+.opt{display:flex;flex-direction:column;gap:18px}
+.opt-head{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+.opt-name{display:flex;align-items:center;gap:12px}
+.letter{font:600 12px/1 var(--ui);letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:5px 7px}
+.opt-name h2{margin:0;font:600 20px/1.2 var(--ui)}
+.opt-desc{margin:0;color:var(--muted);max-width:70ch}
+.swatches{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px 18px}
+.swatches li{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.swatches .chip{width:14px;height:14px;border-radius:3px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.15)}
+.swatches .hex{font-family:"JetBrains Mono",monospace;color:var(--fg)}
+.fonts{margin:0;font-size:12px;color:var(--muted)}
+.frame{border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+
+/* ---------- shared mock skeleton ---------- */
+.mock{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:560px;position:relative;isolation:isolate}
+.mock p{margin:0}
+.sb{display:flex;flex-direction:column;gap:4px;padding:18px 12px}
+.sb .grp{margin-top:12px;font-size:11px}
+.sb .chat{padding:7px 10px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb .sb-foot{margin-top:auto;font-size:13px;padding:7px 10px}
+.sb .new,.sb .search{padding:8px 10px;font-size:13px}
+.main{display:flex;flex-direction:column;min-width:0}
+.top{display:flex;align-items:center;gap:12px;padding:14px 24px}
+.top .menu{display:none}
+.top .title{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top .model{font-size:12px;padding:5px 10px;white-space:nowrap}
+.thread{flex:1;display:flex;flex-direction:column;gap:22px;padding:18px 24px 24px;max-width:760px;width:100%;margin:0 auto;box-sizing:border-box}
+.msg{display:flex;flex-direction:column;gap:10px}
+.msg.user{align-self:flex-end;align-items:flex-end;max-width:80%}
+.msg.ai{max-width:100%}
+.msg pre{margin:0;padding:12px 14px;overflow-x:auto;font-size:12.5px;line-height:1.55;position:relative}
+.msg pre .lang{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;opacity:.7}
+.att{display:inline-block;font-size:12px;padding:4px 10px;white-space:nowrap}
+.meta{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;align-items:center}
+.meta .cost{margin-left:auto;font-variant-numeric:tabular-nums}
+.composer{margin:0 24px 20px;display:flex;flex-direction:column;gap:8px;padding:12px 14px;max-width:760px;width:calc(100% - 48px);align-self:center;box-sizing:border-box}
+.composer .row{display:flex;align-items:center;gap:10px}
+.composer .ph{flex:1}
+.composer .send{display:grid;place-items:center;width:32px;height:32px;font-weight:700}
+.caret{display:inline-block}
+@media (max-width:680px){
+  .mock{grid-template-columns:minmax(0,1fr);min-height:0}
+  .sb{display:none}
+  .top{padding:12px 16px}
+  .top .menu{display:inline}
+  .thread{padding:14px 16px 18px}
+  .composer{margin:0 12px 12px;width:calc(100% - 24px)}
+  .msg.user{max-width:92%}
+}
+
+/* ---------- A: Midnight neon ---------- */
+.neon{background:radial-gradient(900px 400px at 85% -10%,rgba(61,232,255,.10),transparent 60%),radial-gradient(700px 500px at -10% 110%,rgba(90,110,255,.10),transparent 60%),#080b12;color:#d7deea;font:14px/1.6 Manrope,system-ui,sans-serif}
+.neon .sb{background:rgba(20,27,43,.55);backdrop-filter:blur(14px);border-right:1px solid rgba(120,160,220,.10)}
+.neon .brand{font:700 15px/1 Sora,sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#fff;padding:4px 10px 14px}
+.neon .new{border:1px solid rgba(61,232,255,.4);color:#3de8ff;border-radius:8px;text-align:center}
+.neon .search{background:rgba(255,255,255,.04);border-radius:8px;color:#6b7690}
+.neon .grp{color:#6b7690;text-transform:uppercase;letter-spacing:.12em;padding:0 10px}
+.neon .chat{border-radius:8px;color:#aab3c5}
+.neon .chat.active{background:rgba(61,232,255,.08);color:#fff;box-shadow:inset 2px 0 0 #3de8ff}
+.neon .sb-foot{color:#6b7690}
+.neon .top{border-bottom:1px solid rgba(120,160,220,.08)}
+.neon .title{font:500 14px Sora,sans-serif;color:#fff}
+.neon .model{border:1px solid rgba(120,160,220,.2);border-radius:999px;color:#aab3c5;font-family:"JetBrains Mono",monospace}
+.neon .msg.user p{background:#141b2b;border:1px solid rgba(61,232,255,.18);border-radius:14px 14px 4px 14px;padding:10px 14px}
+.neon .msg.ai{padding-left:16px;border-left:2px solid #3de8ff;box-shadow:-8px 0 18px -10px rgba(61,232,255,.7)}
+.neon code{font-family:"JetBrains Mono",monospace;font-size:.9em;color:#3de8ff}
+.neon pre{background:rgba(0,0,0,.35);border:1px solid rgba(120,160,220,.12);border-radius:10px;font-family:"JetBrains Mono",monospace;color:#c9d4e6}
+.neon .att{background:rgba(61,232,255,.08);border:1px solid rgba(61,232,255,.25);color:#9ff3ff;border-radius:6px;font-family:"JetBrains Mono",monospace}
+.neon .meta{color:#6b7690}
+.neon .branch{color:#3de8ff}
+.neon .caret{width:8px;height:8px;border-radius:50%;background:#3de8ff;box-shadow:0 0 10px #3de8ff;margin-left:6px;vertical-align:middle}
+.neon .composer{background:rgba(20,27,43,.6);backdrop-filter:blur(14px);border:1px solid rgba(120,160,220,.16);border-radius:16px;box-shadow:0 10px 40px -12px rgba(61,232,255,.25)}
+.neon .ph{color:#6b7690}
+.neon .send{background:#3de8ff;color:#061018;border-radius:10px}
+
+/* ---------- B: Aurora ---------- */
+.aurora{background:radial-gradient(520px 360px at 78% 18%,rgba(123,92,255,.45),transparent 70%),radial-gradient(480px 340px at 18% 88%,rgba(34,211,197,.28),transparent 70%),radial-gradient(420px 300px at 96% 96%,rgba(217,70,166,.30),transparent 70%),#0e0b1f;color:#ece8ff;font:14.5px/1.6 "DM Sans",system-ui,sans-serif}
+.aurora .sb{background:rgba(14,11,31,.55);backdrop-filter:blur(20px);border-right:1px solid rgba(255,255,255,.06)}
+.aurora .brand{font:700 20px/1 "Bricolage Grotesque",sans-serif;letter-spacing:-.02em;padding:4px 10px 14px;background:linear-gradient(90deg,#b8a6ff,#5eead4);-webkit-background-clip:text;background-clip:text;color:transparent}
+.aurora .new{background:linear-gradient(90deg,#7b5cff,#22d3c5);color:#0e0b1f;font-weight:500;border-radius:999px;text-align:center}
+.aurora .search{background:rgba(255,255,255,.06);border-radius:999px;color:#a49dc8}
+.aurora .grp{color:#a49dc8;padding:0 10px}
+.aurora .chat{border-radius:999px;color:#cfc9ee}
+.aurora .chat.active{background:rgba(255,255,255,.10);color:#fff}
+.aurora .sb-foot{color:#a49dc8}
+.aurora .title{font:600 16px "Bricolage Grotesque",sans-serif}
+.aurora .model{background:rgba(255,255,255,.08);border-radius:999px;color:#ece8ff}
+.aurora .msg.user p{background:rgba(255,255,255,.09);backdrop-filter:blur(10px);border-radius:20px;padding:11px 16px}
+.aurora .msg.ai p:first-child::before{content:"\25C6  ";background:linear-gradient(90deg,#b8a6ff,#5eead4);-webkit-background-clip:text;background-clip:text;color:transparent}
+.aurora code{font-family:"JetBrains Mono",monospace;font-size:.88em;background:rgba(255,255,255,.08);padding:1px 6px;border-radius:6px}
+.aurora pre{background:rgba(10,8,24,.7);border-radius:16px;font-family:"JetBrains Mono",monospace;color:#ddd6ff}
+.aurora pre code,.aurora pre{background-clip:padding-box}
+.aurora .att{background:rgba(255,255,255,.1);border-radius:999px;color:#ece8ff}
+.aurora .meta{color:#a49dc8}
+.aurora .branch{background:rgba(255,255,255,.08);border-radius:999px;padding:3px 10px;color:#fff}
+.aurora .caret{width:40px;height:10px;border-radius:999px;margin-left:8px;vertical-align:middle;background:linear-gradient(90deg,#7b5cff,#22d3c5,#d946a6)}
+.aurora .composer{border:2px solid transparent;border-radius:22px;background:linear-gradient(#151130,#151130) padding-box,linear-gradient(90deg,#7b5cff,#22d3c5,#d946a6) border-box}
+.aurora .ph{color:#a49dc8}
+.aurora .send{background:linear-gradient(135deg,#7b5cff,#22d3c5);color:#0e0b1f;border-radius:50%}
+
+/* ---------- C: Terminal amber ---------- */
+.amber{background:#16140f;color:#f3e3c0;font:13.5px/1.6 "IBM Plex Mono",ui-monospace,monospace}
+.amber::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px);z-index:2}
+.amber .sb{background:#1b1912;border-right:1px solid #3a3325}
+.amber .brand{font:400 26px/1 VT323,monospace;color:#ffb000;padding:2px 10px 12px;text-shadow:0 0 8px rgba(255,176,0,.5)}
+.amber .brand::after{content:":~$"}
+.amber .new{color:#ffb000;border:1px solid #ffb000}
+.amber .new::before{content:"[ "}.amber .new::after{content:" ]"}
+.amber .search{color:#8a7a58;border-bottom:1px dashed #3a3325}
+.amber .search::before{content:"/ "}
+.amber .grp{color:#8a7a58;padding:0 10px}
+.amber .grp::before{content:"# "}
+.amber .chat{color:#c9b68d}
+.amber .chat::before{content:"  "; white-space:pre}
+.amber .chat.active{background:#ffb000;color:#16140f}
+.amber .chat.active::before{content:"> "}
+.amber .sb-foot{color:#8a7a58}
+.amber .top{border-bottom:1px solid #3a3325}
+.amber .title{color:#ffb000}
+.amber .model{border:1px solid #3a3325;color:#c9b68d}
+.amber .model::before{content:"model="}
+.amber .msg.user{align-self:stretch;align-items:flex-start;max-width:100%}
+.amber .msg.user p::before{content:"you \25B8  ";color:#8a7a58}
+.amber .msg.ai p:first-child::before{content:"ai  \25B8  ";color:#ffb000}
+.amber .msg.ai{padding-left:0}
+.amber code{color:#ffb000}
+.amber pre{background:#0f0e0a;border:1px solid #3a3325;font-family:inherit;color:#f3e3c0}
+.amber pre .lang{color:#8a7a58}
+.amber .att{border:1px solid #8a7a58;color:#c9b68d}
+.amber .att::before{content:"@"}
+.amber .meta{color:#8a7a58}
+.amber .branch{color:#ffb000}
+.amber .caret{width:.6em;height:1.1em;background:#ffb000;vertical-align:text-bottom;margin-left:4px;animation:blink 1s steps(1) infinite}
+.amber .composer{border:1px solid #ffb000;background:#1b1912}
+.amber .ph{color:#8a7a58}
+.amber .ph::before{content:"\25B8  ";color:#ffb000}
+.amber .send{border:1px solid #ffb000;color:#ffb000;width:auto;padding:0 10px;height:28px}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- D: Editorial ink ---------- */
+.ink{background:#0b0b0c;color:#e9e6e1;font:14px/1.6 "Instrument Sans",system-ui,sans-serif}
+.ink .sb{background:#0b0b0c;border-right:1px solid #1f1f22;padding-top:22px}
+.ink .brand{font:400 26px/1 "Instrument Serif",serif;padding:0 10px 16px;font-style:italic}
+.ink .new{color:#ff5a4e;font-weight:500}
+.ink .search{color:#8b8780;border-bottom:1px solid #1f1f22}
+.ink .grp{color:#8b8780;text-transform:uppercase;letter-spacing:.14em;font-size:10.5px;padding:0 10px}
+.ink .chat{color:#b9b5ae}
+.ink .chat.active{color:#fff;font-weight:500}
+.ink .chat.active::before{content:"\25CF  ";color:#ff5a4e;font-size:9px;vertical-align:middle}
+.ink .sb-foot{color:#8b8780}
+.ink .top{padding-top:20px}
+.ink .title{font:400 30px/1.15 "Instrument Serif",serif;letter-spacing:-.01em;white-space:normal}
+.ink .model{color:#8b8780;border-bottom:1px solid #3a3a3e;padding:2px 0}
+.ink .thread{gap:28px}
+.ink .msg.user p{color:#b9b5ae;font-style:italic;font-family:"Instrument Serif",serif;font-size:19px;text-align:right}
+.ink .msg.ai p{font:17px/1.65 Newsreader,Georgia,serif;max-width:62ch}
+.ink code{font-family:"JetBrains Mono",monospace;font-size:.8em;color:#ffb3ab}
+.ink pre{background:#17171a;border-radius:4px;font-family:"JetBrains Mono",monospace;color:#d8d4cd}
+.ink pre .lang{color:#ff5a4e;opacity:1}
+.ink .att{border:1px solid #3a3a3e;border-radius:2px;color:#b9b5ae}
+.ink .meta{color:#8b8780;border-top:1px solid #1f1f22;padding-top:10px}
+.ink .branch{color:#e9e6e1}
+.ink .caret{width:7px;height:7px;border-radius:50%;background:#ff5a4e;margin-left:6px;vertical-align:middle}
+.ink .composer{border-top:1px solid #3a3a3e;padding:14px 0 4px;margin-bottom:24px}
+.ink .ph{color:#8b8780;font:17px Newsreader,Georgia,serif}
+.ink .send{width:auto;height:auto;color:#ff5a4e;font-weight:600}
+.ink .send::before{content:"\25CF  send "}
+.ink .send{font-size:0}.ink .send::before{font-size:13px}
+
+@media (prefers-reduced-motion:reduce){.amber .caret{animation:none}}
+</style>
+<div class="wrap">
+  <header class="intro">
+    <h1>Sprinter Looks</h1>
+    <p>Four dark-only directions for the chat screen. Each one shows the same conversation: an attachment, a code block, the branch picker, per-message cost, and a PDF waiting in the composer. The layout collapses to its phone version below 680px. These are static sketches with nothing interactive. Pick one, or name the parts you want to mix.</p>
+  </header>
+
+<section class="opt" id="neon">
+  <div class="opt-head">
+    <div class="opt-name"><span class="letter">A</span><h2>Midnight neon</h2></div>
+    <p class="opt-desc">Blue-black base, frosted-glass panels, one electric cyan accent. The reply that is streaming gets a soft glow along its edge.</p>
+    <ul class="swatches"><li><span class="chip" style="background:#080b12"></span><span class="hex">#080b12</span><span class="role">base</span></li><li><span class="chip" style="background:#141b2b"></span><span class="hex">#141b2b</span><span class="role">panel</span></li><li><span class="chip" style="background:#3de8ff"></span><span class="hex">#3de8ff</span><span class="role">accent</span></li><li><span class="chip" style="background:#d7deea"></span><span class="hex">#d7deea</span><span class="role">text</span></li><li><span class="chip" style="background:#6b7690"></span><span class="hex">#6b7690</span><span class="role">muted</span></li></ul>
+    <p class="fonts">Type: Sora / Manrope / JetBrains Mono</p>
+  </div>
+  <div class="frame">
+<div class="mock neon">
+  <aside class="sb">
+    <div class="brand">Sprinter</div>
+    <div class="new">+ New chat</div>
+    <div class="search">Search chats</div>
+    <div class="grp">Today</div>
+    <div class="chat active">Borrow checker vs. Arc&lt;Mutex&gt;</div>
+    <div class="chat">Summarize Q3 lease PDF</div>
+    <div class="grp">Last week</div>
+    <div class="chat">PWA install on iOS</div>
+    <div class="chat">Sourdough hydration math</div>
+    <div class="sb-foot">Settings</div>
+  </aside>
+  <div class="main">
+    <div class="top"><span class="menu">&#8801;</span><span class="title">Borrow checker vs. Arc&lt;Mutex&gt;</span><span class="model">claude-sonnet-5 &#9662;</span></div>
+    <div class="thread">
+      <div class="msg user">
+        <span class="att">main.rs &middot; 2 KB</span>
+        <p>Why does this fail to compile? I only read <code>first</code> after the push.</p>
+      </div>
+      <div class="msg ai">
+        <p>Because <code>first</code> is a shared borrow of <code>v</code> that is still alive when <code>push</code> needs a mutable one. Pushing may reallocate the vector and leave <code>first</code> pointing at freed memory.</p>
+        <pre><span class="lang">rust</span>let first = &amp;v[0];
+v.push(4);   // error[E0502]: cannot borrow `v` as mutable
+println!("{first}");</pre>
+        <p>Copy the value out instead: <code>let first = v[0];</code><span class="caret"></span></p>
+        <div class="meta"><span class="branch">&lsaquo; 2 / 3 &rsaquo;</span><span class="acts">Copy &middot; Retry &middot; Edit</span><span class="cost">412 tok &middot; $0.0031</span></div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="chips"><span class="att">lease-2026.pdf &middot; 3.1 MB</span></div>
+      <div class="row"><span class="ph">Message claude-sonnet-5&hellip;</span><span class="send">&uarr;</span></div>
+    </div>
+  </div>
+</div></div>
+</section>
+<section class="opt" id="aurora">
+  <div class="opt-head">
+    <div class="opt-name"><span class="letter">B</span><h2>Aurora</h2></div>
+    <p class="opt-desc">Deep violet with slow, blurred color fields behind the chat. The composer has a gradient border, and chips are pills.</p>
+    <ul class="swatches"><li><span class="chip" style="background:#0e0b1f"></span><span class="hex">#0e0b1f</span><span class="role">base</span></li><li><span class="chip" style="background:#7b5cff"></span><span class="hex">#7b5cff</span><span class="role">violet</span></li><li><span class="chip" style="background:#22d3c5"></span><span class="hex">#22d3c5</span><span class="role">teal</span></li><li><span class="chip" style="background:#d946a6"></span><span class="hex">#d946a6</span><span class="role">magenta</span></li><li><span class="chip" style="background:#ece8ff"></span><span class="hex">#ece8ff</span><span class="role">text</span></li></ul>
+    <p class="fonts">Type: Bricolage Grotesque / DM Sans</p>
+  </div>
+  <div class="frame">
+<div class="mock aurora">
+  <aside class="sb">
+    <div class="brand">Sprinter</div>
+    <div class="new">+ New chat</div>
+    <div class="search">Search chats</div>
+    <div class="grp">Today</div>
+    <div class="chat active">Borrow checker vs. Arc&lt;Mutex&gt;</div>
+    <div class="chat">Summarize Q3 lease PDF</div>
+    <div class="grp">Last week</div>
+    <div class="chat">PWA install on iOS</div>
+    <div class="chat">Sourdough hydration math</div>
+    <div class="sb-foot">Settings</div>
+  </aside>
+  <div class="main">
+    <div class="top"><span class="menu">&#8801;</span><span class="title">Borrow checker vs. Arc&lt;Mutex&gt;</span><span class="model">claude-sonnet-5 &#9662;</span></div>
+    <div class="thread">
+      <div class="msg user">
+        <span class="att">main.rs &middot; 2 KB</span>
+        <p>Why does this fail to compile? I only read <code>first</code> after the push.</p>
+      </div>
+      <div class="msg ai">
+        <p>Because <code>first</code> is a shared borrow of <code>v</code> that is still alive when <code>push</code> needs a mutable one. Pushing may reallocate the vector and leave <code>first</code> pointing at freed memory.</p>
+        <pre><span class="lang">rust</span>let first = &amp;v[0];
+v.push(4);   // error[E0502]: cannot borrow `v` as mutable
+println!("{first}");</pre>
+        <p>Copy the value out instead: <code>let first = v[0];</code><span class="caret"></span></p>
+        <div class="meta"><span class="branch">&lsaquo; 2 / 3 &rsaquo;</span><span class="acts">Copy &middot; Retry &middot; Edit</span><span class="cost">412 tok &middot; $0.0031</span></div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="chips"><span class="att">lease-2026.pdf &middot; 3.1 MB</span></div>
+      <div class="row"><span class="ph">Message claude-sonnet-5&hellip;</span><span class="send">&uarr;</span></div>
+    </div>
+  </div>
+</div></div>
+</section>
+<section class="opt" id="amber">
+  <div class="opt-head">
+    <div class="opt-name"><span class="letter">C</span><h2>Terminal amber</h2></div>
+    <p class="opt-desc">Warm charcoal and phosphor amber. Monospace everywhere, faint scanlines, and a block cursor while the reply streams.</p>
+    <ul class="swatches"><li><span class="chip" style="background:#16140f"></span><span class="hex">#16140f</span><span class="role">base</span></li><li><span class="chip" style="background:#221f17"></span><span class="hex">#221f17</span><span class="role">panel</span></li><li><span class="chip" style="background:#ffb000"></span><span class="hex">#ffb000</span><span class="role">amber</span></li><li><span class="chip" style="background:#f3e3c0"></span><span class="hex">#f3e3c0</span><span class="role">text</span></li><li><span class="chip" style="background:#8a7a58"></span><span class="hex">#8a7a58</span><span class="role">dim</span></li></ul>
+    <p class="fonts">Type: IBM Plex Mono / VT323</p>
+  </div>
+  <div class="frame">
+<div class="mock amber">
+  <aside class="sb">
+    <div class="brand">Sprinter</div>
+    <div class="new">+ New chat</div>
+    <div class="search">Search chats</div>
+    <div class="grp">Today</div>
+    <div class="chat active">Borrow checker vs. Arc&lt;Mutex&gt;</div>
+    <div class="chat">Summarize Q3 lease PDF</div>
+    <div class="grp">Last week</div>
+    <div class="chat">PWA install on iOS</div>
+    <div class="chat">Sourdough hydration math</div>
+    <div class="sb-foot">Settings</div>
+  </aside>
+  <div class="main">
+    <div class="top"><span class="menu">&#8801;</span><span class="title">Borrow checker vs. Arc&lt;Mutex&gt;</span><span class="model">claude-sonnet-5 &#9662;</span></div>
+    <div class="thread">
+      <div class="msg user">
+        <span class="att">main.rs &middot; 2 KB</span>
+        <p>Why does this fail to compile? I only read <code>first</code> after the push.</p>
+      </div>
+      <div class="msg ai">
+        <p>Because <code>first</code> is a shared borrow of <code>v</code> that is still alive when <code>push</code> needs a mutable one. Pushing may reallocate the vector and leave <code>first</code> pointing at freed memory.</p>
+        <pre><span class="lang">rust</span>let first = &amp;v[0];
+v.push(4);   // error[E0502]: cannot borrow `v` as mutable
+println!("{first}");</pre>
+        <p>Copy the value out instead: <code>let first = v[0];</code><span class="caret"></span></p>
+        <div class="meta"><span class="branch">&lsaquo; 2 / 3 &rsaquo;</span><span class="acts">Copy &middot; Retry &middot; Edit</span><span class="cost">412 tok &middot; $0.0031</span></div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="chips"><span class="att">lease-2026.pdf &middot; 3.1 MB</span></div>
+      <div class="row"><span class="ph">Message claude-sonnet-5&hellip;</span><span class="send">&uarr;</span></div>
+    </div>
+  </div>
+</div></div>
+</section>
+<section class="opt" id="ink">
+  <div class="opt-head">
+    <div class="opt-name"><span class="letter">D</span><h2>Editorial ink</h2></div>
+    <p class="opt-desc">Ink-black with serif reading type for replies and a single coral accent. Few borders and generous whitespace.</p>
+    <ul class="swatches"><li><span class="chip" style="background:#0b0b0c"></span><span class="hex">#0b0b0c</span><span class="role">base</span></li><li><span class="chip" style="background:#17171a"></span><span class="hex">#17171a</span><span class="role">panel</span></li><li><span class="chip" style="background:#ff5a4e"></span><span class="hex">#ff5a4e</span><span class="role">coral</span></li><li><span class="chip" style="background:#e9e6e1"></span><span class="hex">#e9e6e1</span><span class="role">text</span></li><li><span class="chip" style="background:#8b8780"></span><span class="hex">#8b8780</span><span class="role">muted</span></li></ul>
+    <p class="fonts">Type: Instrument Serif / Newsreader / Instrument Sans</p>
+  </div>
+  <div class="frame">
+<div class="mock ink">
+  <aside class="sb">
+    <div class="brand">Sprinter</div>
+    <div class="new">+ New chat</div>
+    <div class="search">Search chats</div>
+    <div class="grp">Today</div>
+    <div class="chat active">Borrow checker vs. Arc&lt;Mutex&gt;</div>
+    <div class="chat">Summarize Q3 lease PDF</div>
+    <div class="grp">Last week</div>
+    <div class="chat">PWA install on iOS</div>
+    <div class="chat">Sourdough hydration math</div>
+    <div class="sb-foot">Settings</div>
+  </aside>
+  <div class="main">
+    <div class="top"><span class="menu">&#8801;</span><span class="title">Borrow checker vs. Arc&lt;Mutex&gt;</span><span class="model">claude-sonnet-5 &#9662;</span></div>
+    <div class="thread">
+      <div class="msg user">
+        <span class="att">main.rs &middot; 2 KB</span>
+        <p>Why does this fail to compile? I only read <code>first</code> after the push.</p>
+      </div>
+      <div class="msg ai">
+        <p>Because <code>first</code> is a shared borrow of <code>v</code> that is still alive when <code>push</code> needs a mutable one. Pushing may reallocate the vector and leave <code>first</code> pointing at freed memory.</p>
+        <pre><span class="lang">rust</span>let first = &amp;v[0];
+v.push(4);   // error[E0502]: cannot borrow `v` as mutable
+println!("{first}");</pre>
+        <p>Copy the value out instead: <code>let first = v[0];</code><span class="caret"></span></p>
+        <div class="meta"><span class="branch">&lsaquo; 2 / 3 &rsaquo;</span><span class="acts">Copy &middot; Retry &middot; Edit</span><span class="cost">412 tok &middot; $0.0031</span></div>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="chips"><span class="att">lease-2026.pdf &middot; 3.1 MB</span></div>
+      <div class="row"><span class="ph">Message claude-sonnet-5&hellip;</span><span class="send">&uarr;</span></div>
+    </div>
+  </div>
+</div></div>
+</section>
+</div>
