@@ -1,38 +1,24 @@
 import { apiRequest, jsonBody } from "./client";
+import type {
+  ChatDetail as GeneratedChatDetail,
+  ChatPage,
+  ChatSummary,
+  MessageRecord,
+  NewChatMessageResponse,
+  RegenerateMessageResponse,
+  SendMessageResponse,
+} from "./types.gen";
 
-export type ChatSummary = { id: string; title: string | null; model: string; updated_at: number };
-export type ChatPage = { items: ChatSummary[]; next_cursor: string | null };
-export type ChatAttachment = { upload_id: string; position: number; pdf_engine: string | null; parse_cache: string | null };
-export type ChatMessage = {
-  id: string;
-  chat_id: string;
-  parent_id: string | null;
+export type { ChatPage, ChatSummary };
+export type ChatAttachment = MessageRecord["attachments"][number];
+export type ChatMessage = Omit<MessageRecord, "role" | "status"> & {
   role: "user" | "assistant";
-  content: string;
   status: "streaming" | "complete" | "cancelled" | "error" | "interrupted";
-  error: string | null;
-  model: string | null;
-  generation_id: string | null;
-  finish_reason: string | null;
-  prompt_tokens: number | null;
-  completion_tokens: number | null;
-  reasoning_tokens: number | null;
-  cost: number | null;
-  created_at: number;
-  updated_at: number;
-  attachments: ChatAttachment[];
 };
-export type ChatDetail = {
-  id: string;
-  title: string | null;
-  title_source: string;
-  model: string;
-  current_leaf_id: string | null;
-  created_at: number;
-  updated_at: number;
-  messages: ChatMessage[];
-};
-export type SendMessageResponse = { chat?: ChatSummary; user_message: ChatMessage | null; assistant_message: ChatMessage };
+export type ChatDetail = Omit<GeneratedChatDetail, "messages"> & { messages: ChatMessage[] };
+export type NewChatResponse = Omit<NewChatMessageResponse, "user_message" | "assistant_message"> & { user_message: ChatMessage; assistant_message: ChatMessage };
+export type ExistingChatResponse = Omit<SendMessageResponse, "user_message" | "assistant_message"> & { user_message: ChatMessage; assistant_message: ChatMessage };
+export type RetryResponse = Omit<RegenerateMessageResponse, "assistant_message"> & { assistant_message: ChatMessage };
 export type StreamEvent =
   | { event: "snapshot" | "delta"; content: string }
   | { event: "done"; status: ChatMessage["status"]; finish_reason?: string | null; cost?: number | null }
@@ -40,19 +26,36 @@ export type StreamEvent =
   | { event: "title"; chat_id: string; title: string };
 
 export const fetchChats = () => apiRequest<ChatPage>("/api/chats");
-export const fetchChat = (id: string) => apiRequest<ChatDetail>(`/api/chats/${encodeURIComponent(id)}`);
+const asMessage = (message: MessageRecord): ChatMessage => ({
+  ...message,
+  role: message.role as ChatMessage["role"],
+  status: message.status as ChatMessage["status"],
+});
+export const fetchChat = async (id: string): Promise<ChatDetail> => {
+  const chat = await apiRequest<GeneratedChatDetail>(`/api/chats/${encodeURIComponent(id)}`);
+  return { ...chat, messages: chat.messages.map(asMessage) };
+};
 export const updateChat = (id: string, patch: { title?: string; model?: string }) =>
   apiRequest<ChatSummary>(`/api/chats/${encodeURIComponent(id)}`, { method: "PATCH", body: jsonBody(patch) });
 export const deleteChat = (id: string) => apiRequest<void>(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
-export const sendToNewChat = (content: string, model?: string) => apiRequest<SendMessageResponse>("/api/chats/new/messages", {
+export const sendToNewChat = async (content: string, model?: string): Promise<NewChatResponse> => {
+  const result = await apiRequest<NewChatMessageResponse>("/api/chats/new/messages", {
   method: "POST",
   body: jsonBody({ parent_id: null, content, attachment_ids: [], ...(model ? { model } : {}) }),
-});
-export const sendToChat = (id: string, parent_id: string | null, content: string, model?: string) => apiRequest<SendMessageResponse>(`/api/chats/${encodeURIComponent(id)}/messages`, {
+  });
+  return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
+};
+export const sendToChat = async (id: string, parent_id: string | null, content: string, model?: string): Promise<ExistingChatResponse> => {
+  const result = await apiRequest<SendMessageResponse>(`/api/chats/${encodeURIComponent(id)}/messages`, {
   method: "POST",
   body: jsonBody({ parent_id, content, attachment_ids: [], ...(model ? { model } : {}) }),
-});
-export const regenerateMessage = (id: string) => apiRequest<{ assistant_message: ChatMessage }>(`/api/messages/${encodeURIComponent(id)}/regenerate`, { method: "POST", body: jsonBody({}) });
+  });
+  return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
+};
+export const regenerateMessage = async (id: string): Promise<RetryResponse> => {
+  const result = await apiRequest<RegenerateMessageResponse>(`/api/messages/${encodeURIComponent(id)}/regenerate`, { method: "POST", body: jsonBody({}) });
+  return { assistant_message: asMessage(result.assistant_message) };
+};
 export const cancelMessage = (id: string) => apiRequest<void>(`/api/messages/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));

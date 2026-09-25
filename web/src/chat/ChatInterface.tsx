@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, RotateCw, Sparkles, Square } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, updateChat, watchMessage } from "../api/chats";
-import type { ChatDetail, ChatMessage } from "../api/chats";
+import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings } from "../api/settings";
 import { DefaultModelPicker } from "../components/DefaultModelPicker";
@@ -20,6 +20,7 @@ import { ModelPicker } from "../components/ModelPicker";
 
 type Props = { chatId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
+type SendResult = { chatId: string; chat?: ChatSummary; user_message: ChatMessage; assistant_message: ChatMessage };
 
 function textOf(message: AppendMessage) {
   return message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
@@ -88,20 +89,22 @@ export function ChatInterface({ chatId }: Props) {
   }, [chatId, queryClient, latestAssistant?.id]);
 
   const send = useMutation({
-    mutationFn: async ({ content, parentId }: { content: string; parentId: string | null }) => {
-      if (chatId) return { chatId, response: await sendToChat(chatId, parentId, content) };
+    mutationFn: async ({ content, parentId }: { content: string; parentId: string | null }): Promise<SendResult> => {
+      if (chatId) {
+        const response = await sendToChat(chatId, parentId, content);
+        return { chatId, user_message: response.user_message, assistant_message: response.assistant_message };
+      }
       const response = await sendToNewChat(content);
-      if (!response.chat) throw new Error("The server did not return the new conversation.");
-      return { chatId: response.chat.id, response };
+      return { chatId: response.chat.id, chat: response.chat, user_message: response.user_message, assistant_message: response.assistant_message };
     },
-    onSuccess: ({ chatId: nextChatId, response }) => {
+    onSuccess: ({ chatId: nextChatId, chat, user_message, assistant_message }) => {
       setDraftError(undefined);
       queryClient.setQueryData<ChatDetail>(["chat", nextChatId], (current) => {
-        if (current) return { ...current, current_leaf_id: response.assistant_message.id, messages: [...current.messages, ...(response.user_message ? [response.user_message] : []), response.assistant_message] };
+        if (current) return { ...current, current_leaf_id: assistant_message.id, messages: [...current.messages, user_message, assistant_message] };
         const now = Date.now();
         return {
-          id: nextChatId, title: response.chat?.title ?? null, title_source: "auto", model: response.chat?.model ?? settingsQuery.data?.default_model ?? "", current_leaf_id: response.assistant_message.id, created_at: now, updated_at: now,
-          messages: [...(response.user_message ? [response.user_message] : []), response.assistant_message],
+          id: nextChatId, title: chat?.title ?? null, title_source: "auto", model: chat?.model ?? settingsQuery.data?.default_model ?? "", current_leaf_id: assistant_message.id, created_at: now, updated_at: now,
+          messages: [user_message, assistant_message],
         };
       });
       void queryClient.invalidateQueries({ queryKey: ["chats"] });
@@ -184,6 +187,7 @@ export function ChatInterface({ chatId }: Props) {
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>}
+    {streamingMessage && !streamingMessage.content && <div className="chat-thinking" role="status">THINKING…</div>}
 
     <div className="composer-wrap">
       {draftError && <div className="chat-send-error" role="alert">{draftError}{draftError.toLowerCase().includes("api key") && <a href="/settings">Open Settings</a>}</div>}
