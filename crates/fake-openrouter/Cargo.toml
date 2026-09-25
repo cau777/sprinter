@@ -1,0 +1,21 @@
+[package]
+name = "fake-openrouter"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "fake_openrouter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fake-openrouter"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["json", "http1", "tokio"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

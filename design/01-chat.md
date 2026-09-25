@@ -120,3 +120,22 @@ fetch.
 
 Search uses SQLite FTS5 over message content and chat titles. Results link to the chat, and to the matching message where
 possible.
+
+## OpenRouter protocol spike (2026-09-25)
+
+Checked the live official `GET https://openrouter.ai/api/v1/models` response. It returns
+`{"data":[...]}` and model records expose `id`, `name`, `context_length`, `pricing`,
+`architecture.input_modalities` and `architecture.output_modalities`, matching the model
+metadata we use. The official `/api/v1/credits` endpoint rejected an unauthenticated
+request with HTTP 401 and `{"error":{"message":"No cookie auth credentials found","code":401}}`.
+The live model-list endpoint and the OpenRouter docs navigation confirmed the current
+endpoint paths. The docs page exposes the chat-completion and credits reference pages,
+but direct retrieval of those reference pages was unavailable in this environment.
+
+The fake therefore follows the observed models envelope and uses the designed
+OpenAI-compatible streaming shape: `data:` chat-completion chunks, a final chunk with
+`finish_reason` and `usage`, then `data: [DONE]`. OpenRouter-specific request flags, PDF parsing and detailed provider
+error variants (including `usage.include`, reasoning exclusion, transforms, annotations,
+and context-length errors) remain unverified from the current reference text and should
+be revisited if the official docs become directly retrievable. Fake usage includes
+`usage.cost` as required by our caller contract.
