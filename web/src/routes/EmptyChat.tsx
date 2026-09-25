@@ -1,5 +1,6 @@
 import { Button } from "@heroui/react";
-import { ArrowDown, ArrowUpRight, CornerDownLeft, Paperclip, Sparkles } from "lucide-react";
+import { ArrowUpRight, CornerDownLeft, Paperclip, Sparkles } from "lucide-react";
+import { DefaultModelPicker } from "../components/DefaultModelPicker";
 
 export function EmptyChat() {
   return (
@@ -20,7 +21,7 @@ export function EmptyChat() {
         <form className="composer-card" onSubmit={(event) => event.preventDefault()}>
           <textarea aria-label="Message" placeholder="Message Sprinter…" rows={1} />
           <div className="composer-toolbar">
-            <div className="composer-left"><Button isIconOnly className="attach-button" variant="ghost" aria-label="Attach file"><Paperclip size={17} /></Button><span className="model-pill"><span className="model-indicator" />Choose a model <ArrowDown size={12} /></span></div>
+            <div className="composer-left"><Button isIconOnly className="attach-button" variant="ghost" aria-label="Attach file"><Paperclip size={17} /></Button><DefaultModelPicker /></div>
             <div className="composer-right"><span className="enter-hint"><CornerDownLeft size={12} /> to send</span><Button isIconOnly className="send-button" aria-label="Send message"><ArrowUpRight size={17} /></Button></div>
           </div>
         </form>

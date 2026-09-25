@@ -4,8 +4,10 @@ import { AppShell } from "./components/AppShell";
 import { EmptyChat } from "./routes/EmptyChat";
 import { Login } from "./routes/Login";
 import { apiRequest } from "./api/client";
+import { fetchSettings } from "./api/settings";
 
 const AssistantStoreSpike = lazy(() => import("./routes/AssistantStoreSpike").then((module) => ({ default: module.AssistantStoreSpike })));
+const Setup = lazy(() => import("./routes/Setup").then((module) => ({ default: module.Setup })));
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -39,7 +41,17 @@ const loginRoute = createRoute({
 const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
+  beforeLoad: async () => {
+    const settings = await fetchSettings();
+    if (!settings.openrouter_api_key.set || !settings.default_model) throw redirect({ to: "/setup" });
+  },
   component: EmptyChat,
+});
+
+const setupRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/setup",
+  component: () => <Suspense fallback={<div className="route-loading">Preparing your workspace…</div>}><Setup /></Suspense>,
 });
 
 const spikeRoute = createRoute({
@@ -48,7 +60,7 @@ const spikeRoute = createRoute({
   component: () => <Suspense fallback={<div className="route-loading">Opening runtime lab…</div>}><AssistantStoreSpike /></Suspense>,
 });
 
-const routeTree = rootRoute.addChildren([loginRoute, appRoute.addChildren([homeRoute, spikeRoute])]);
+const routeTree = rootRoute.addChildren([loginRoute, appRoute.addChildren([homeRoute, setupRoute, spikeRoute])]);
 
 export const router = createRouter({ routeTree });
 
