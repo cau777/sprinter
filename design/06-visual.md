@@ -105,3 +105,11 @@ Google Fonts, so the PWA works offline and makes no third-party requests.
 - The icon is the Sprinter mark in cyan on `--bg`, with a maskable variant.
 - `display: standalone`. On iOS, `apple-mobile-web-app-status-bar-style` is
   `black-translucent`.
+
+## M0 implementation notes
+
+The web scaffold maps the design tokens into Tailwind 4 using `@theme inline`, and into
+HeroUI 3's semantic palette through CSS custom properties. Sora, Manrope, and JetBrains
+Mono are bundled from `@fontsource`. The empty chat shell currently includes the glass
+sidebar, private workspace indicator, prompt suggestions, and responsive composer; later
+milestones will wire the controls to the API.

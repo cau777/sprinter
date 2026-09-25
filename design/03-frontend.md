@@ -18,6 +18,24 @@ Status: **Decided**
 | API types | Generated from the Rust structs with `ts-rs` into `web/src/api/types.gen.ts`. There's no handwritten duplication, and a type change breaks the TS build. |
 | Package manager | npm workspaces (`web`, `e2e`) |
 
+### Scaffold compatibility check (M0)
+
+The web scaffold builds with React 19, Vite 7, Tailwind CSS 4, and HeroUI 3.2.6. HeroUI
+3's `@heroui/styles` imports its Tailwind 4 layer and exposes semantic CSS variables; the
+Midnight neon tokens override those variables in `web/src/theme/app.css`. The build is
+self hosted and produces `web/dist` for Rust embedding.
+
+The route `/spike/assistant-ui` is a throwaway external store spike. A local parent-linked
+tree drives `useExternalStoreRuntime`; edit creates a sibling user turn, regenerate creates
+a sibling assistant reply, runtime branch changes return the selected head to the fake
+store, and cancellation stops the local stream while keeping partial text. The stock image
+and text attachment adapters put completed content on the user message. For the app API,
+the attachment adapter can upload the file and retain the returned upload id as metadata;
+`onNew` can then send `attachment_ids` alongside text, and the returned message tree carries
+attachment metadata back to the runtime. No custom assistant-ui message converter is needed
+for ordinary text, image, and file message parts. The demo's file adapters are in-memory
+examples only; they do not call `/api/uploads`.
+
 ## Why assistant-ui
 
 It already implements the chat-specific UX that is expensive to get right:

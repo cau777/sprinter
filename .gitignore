@@ -1,0 +1,27 @@
+# JavaScript / Vite
+node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# Rust build output
+/target/
+
+# Local application state and databases
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# Browser test artifacts
+/playwright-report/
+/test-results/
+/e2e/.auth/
+
+# Local secrets
+.env
+.env.*
+!.env.example
