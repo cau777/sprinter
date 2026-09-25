@@ -8,6 +8,7 @@ import { fetchSettings } from "./api/settings";
 
 const AssistantStoreSpike = lazy(() => import("./routes/AssistantStoreSpike").then((module) => ({ default: module.AssistantStoreSpike })));
 const Setup = lazy(() => import("./routes/Setup").then((module) => ({ default: module.Setup })));
+const SettingsPage = lazy(() => import("./routes/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -54,13 +55,19 @@ const setupRoute = createRoute({
   component: () => <Suspense fallback={<div className="route-loading">Preparing your workspace…</div>}><Setup /></Suspense>,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/settings",
+  component: () => <Suspense fallback={<div className="route-loading">Loading settings…</div>}><SettingsPage /></Suspense>,
+});
+
 const spikeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/spike/assistant-ui",
   component: () => <Suspense fallback={<div className="route-loading">Opening runtime lab…</div>}><AssistantStoreSpike /></Suspense>,
 });
 
-const routeTree = rootRoute.addChildren([loginRoute, appRoute.addChildren([homeRoute, setupRoute, spikeRoute])]);
+const routeTree = rootRoute.addChildren([loginRoute, appRoute.addChildren([homeRoute, setupRoute, settingsRoute, spikeRoute])]);
 
 export const router = createRouter({ routeTree });
 

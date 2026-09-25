@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { Button } from "@heroui/react";
 import { Bot, CircleHelp, Command, LogOut, Menu, MessageSquarePlus, Search, Settings2, Sparkles, X } from "lucide-react";
 import { apiRequest } from "../api/client";
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const currentPath = useRouterState({ select: (state) => state.location.pathname });
+  const pageName = currentPath === "/settings" ? "Settings" : currentPath === "/setup" ? "Workspace setup" : currentPath === "/spike/assistant-ui" ? "Runtime lab" : "New conversation";
 
   return (
     <main className="app-frame">
@@ -24,7 +26,7 @@ export function AppShell() {
         <header className="topbar">
           <div className="breadcrumb">
             <Button isIconOnly className="mobile-menu-button" variant="ghost" aria-label="Open navigation" onPress={() => setDrawerOpen(true)}><Menu size={17} /></Button>
-            <span className="topbar-kicker">WORKSPACE</span><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">New conversation</span>
+            <span className="topbar-kicker">WORKSPACE</span><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">{pageName}</span>
           </div>
           <div className="topbar-right"><span className="connection-dot" /> <span>Local and private</span></div>
         </header>
@@ -60,7 +62,7 @@ function SidebarContents({ onNavigate }: { onNavigate: () => void }) {
 
     <div className="sidebar-bottom">
       <Link to="/spike/assistant-ui" className="sidebar-link" onClick={onNavigate}><Bot size={16} /><span>Runtime spike</span><span className="demo-tag">DEMO</span></Link>
-      <button className="sidebar-link"><Settings2 size={16} /><span>Settings</span></button>
+      <Link to="/settings" className="sidebar-link" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
       <button className="sidebar-link"><CircleHelp size={16} /><span>Help & shortcuts</span></button>
       <div className="sidebar-profile"><div className="profile-avatar">S</div><div><div className="profile-name">Sprinter</div><div className="profile-caption">Private workspace</div></div><Command className="profile-command" size={15} /></div>
       <button className="sidebar-link logout-link" onClick={() => void logout()}><LogOut size={15} /><span>Log out</span></button>
