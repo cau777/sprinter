@@ -7,7 +7,8 @@ Status: **Decided**
 | Kind | Examples | How it reaches the model |
 |---|---|---|
 | Images | png, jpg, webp, gif | Sent as OpenRouter `image_url` content parts (base64 data URL). Only offered when the selected model supports image input. |
-| PDFs | pdf | Sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` ($2 per 1k pages, for scans), and `native` (models with built-in PDF support, billed as input tokens). **We always send the engine explicitly and default to `cloudflare-ai`**, because OpenRouter's own default is the paid `mistral-ocr`. The default is set in Settings, with a per-attachment "OCR" toggle. |
+| PDFs | pdf | Sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` ($2 per 1k pages, for scans), and `native` (models with built-in PDF support, billed as input tokens). **We always send the engine explicitly and default to `cloudflare-ai`**, because OpenRouter's own default is the paid `mistral-ocr`. The default is set in Settings, with a per-attachment "OCR" toggle in the composer, stored as
+`message_attachments.pdf_engine`. |
 | Text and code | txt, md, csv, json, source files | Inlined into the user message as a fenced block labeled with the filename. No provider-side file support is needed. |
 
 Office documents (docx/xlsx/pptx) are **out of scope** for v1.
@@ -24,7 +25,9 @@ PUT /api/uploads  (raw body, filename in header)
    │  server streams the body → $DATA_DIR/tmp/<uuid>
    │  while computing sha256 and counting bytes (aborts at limit)
    │  sniffs magic bytes → decides kind (image/pdf/text) and ignores the client MIME
-   │  text: validates UTF-8
+   │    png/jpeg/webp/gif magic → image    %PDF- → pdf
+   │    otherwise: valid UTF-8 with no NUL bytes → text (mime from extension, else text/plain)
+   │    .svg, and anything else → 415
    ▼
 atomic rename → $DATA_DIR/uploads/<sha[0..2]>/<sha256>   (skipped if it already exists)
 INSERT uploads(id, sha256, filename, mime, kind, size, created_at)
@@ -43,9 +46,23 @@ on each generation, the server rebuilds the prompt from the branch path:
      text  → read file → fenced text block
 ```
 
+## Client-side rules
+
+- Uploads start **as soon as a file is picked, pasted or dropped**. Sending a message
+  only references upload IDs.
+- Attachments belong to the message they were sent with. Branches created by
+  regenerating reuse them. An **edit** starts with the original message's attachments
+  pre-filled in the composer, and they can be removed or added to.
+- Images are downscaled before upload: max 2048 px on the long edge, re-encoded as WebP
+  at quality 0.85. GIFs are uploaded as-is so animation survives. Pasted images are named
+  `pasted-YYYYMMDD-HHMMSS.png`.
+- The model's `input_modalities` (from `/api/models`) decides whether image attachments
+  are offered. For what happens to images already in the history when switching to a
+  model without vision, see [01-chat.md](01-chat.md).
+
 ## Storage options
 
-| | A. Content-addressed files (**proposed**) | B. Per-upload files | C. BLOBs in SQLite |
+| | A. Content-addressed files (**chosen**) | B. Per-upload files | C. BLOBs in SQLite |
 |---|---|---|---|
 | Layout | `uploads/ab/ab12…` named by sha256 | `uploads/<uuid>` | `uploads` table column |
 | Dedupe | Yes. The same file uploaded twice is stored once. | No | No |
@@ -69,7 +86,9 @@ and integrity for free.
 | Files per message | 10 | |
 | Total attachments in a single outgoing prompt | 100 MB raw | Bounds peak memory while building the OpenRouter request |
 
-All limits are configurable in Settings, with hard ceilings enforced by the server.
+All limits are configurable in Settings, up to hard ceilings compiled into the server:
+**image 40 MB, PDF 100 MB, text 5 MB, 20 files per message, 200 MB per prompt**.
+Separately, the typed content of a message is capped at 256 KB.
 
 ## Cost and repeated re-sending
 

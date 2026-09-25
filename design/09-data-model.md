@@ -18,7 +18,10 @@ CREATE TABLE settings (
   value       TEXT NOT NULL,              -- JSON
   updated_at  INTEGER NOT NULL
 );
--- openrouter_api_key is stored as JSON {salt, nonce, ciphertext}; see 07-settings.md
+-- Keys: password_hash (Argon2id PHC string, 05-auth), openrouter_api_key
+--   (JSON {salt, nonce, ciphertext, hint, readable}, 07-settings), default_model,
+--   title_model, favorite_models (JSON array), custom_instructions, pdf_engine,
+--   upload_limits (JSON)
 
 CREATE TABLE sessions (
   id            TEXT PRIMARY KEY,
@@ -78,6 +81,7 @@ CREATE TABLE message_attachments (
   message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   upload_id    TEXT NOT NULL REFERENCES uploads(id),
   position     INTEGER NOT NULL,
+  pdf_engine   TEXT,                      -- PDFs only: 'cloudflare-ai' | 'mistral-ocr' | 'native'
   parse_cache  TEXT,                      -- OpenRouter PDF annotation JSON
   PRIMARY KEY (message_id, upload_id)
 );
@@ -116,6 +120,8 @@ CREATE VIRTUAL TABLE search_fts USING fts5(
 - Triggers keep it in sync with `messages.content` (insert, update, delete) and
   `chats.title`. A title row has `message_id = NULL`.
 - Streaming messages are indexed when they reach a final status, not on every flush.
+  The update trigger has `WHEN NEW.status <> 'streaming'`, and a row is replaced
+  (delete, then insert) so it's never duplicated.
 - Queries use FTS5 `bm25()` ranking and `snippet()` for result previews, grouped by chat.
 
 ## Invariants and notes
@@ -126,6 +132,7 @@ CREATE VIRTUAL TABLE search_fts USING fts5(
 - **Deleting a chat** cascades to its messages and attachments. Orphaned `uploads` rows
   and files are removed by the GC sweep in [02-files.md](02-files.md).
 - **Deleting a single message or branch** is not a v1 feature. The tree is append-only.
+- **Sibling order** is `created_at`, which gives the branch picker its `n / m` index.
 - **Spend survives deleting a chat.** In the same transaction as the delete, the chat's
   message costs are summed per `(day, model)` and upserted into `usage_rollup`. Its
   `usage_events` are kept, with `chat_id` set to NULL. Usage totals are computed as

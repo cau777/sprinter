@@ -1,6 +1,6 @@
 # 01: Chat model and generation
 
-Status: **Decided** (behavior). The storage schema will be settled in the backend doc.
+Status: **Decided.** The schema is in [09-data-model.md](09-data-model.md) and the endpoints are in [10-api.md](10-api.md).
 
 ## v1 feature set
 
@@ -33,23 +33,61 @@ non-destructive.
 The server owns each generation, not the HTTP request. If the client disconnects (tab
 closed, phone locked), the generation keeps running and its result is persisted.
 
-1. `POST /chats/:id/messages` (or a regenerate/edit endpoint) validates the request and
+1. `POST /api/chats/:id/messages` (also used for edits) or `POST /api/messages/:id/regenerate` validates the request and
    inserts the user message plus an empty assistant message with `status = streaming`. It
    spawns a background task and returns the new message IDs right away.
 2. The background task calls OpenRouter with `stream: true` and appends deltas to an
    in-memory buffer, which fans out to subscribers. It flushes the accumulated content to
    the DB periodically (for example every ~1 s) and on completion.
-3. The client subscribes to `GET /messages/:id/stream`, which is SSE. A subscriber first
+3. The client subscribes to `GET /api/messages/:id/stream`, which is SSE. A subscriber first
    gets everything generated so far, then live deltas. Reconnecting after a drop gives the
    same result, so reattaching is seamless.
 4. On completion the message gets `status = complete` and records usage and cost data from
    OpenRouter, finish reason, and model. On failure it gets `status = error` with the
    message.
-5. The user can **stop** a generation explicitly with `POST /messages/:id/cancel`. This is
-   the only thing that cancels it. The partial content is kept and the status becomes
+5. The user can **stop** a generation explicitly with `POST /api/messages/:id/cancel`.
+   This and deleting the chat are the only things that cancel it. The partial content is kept and the status becomes
    `cancelled`.
 6. On server start, any message still in `streaming` status (left over from a crash or
    restart) is marked `interrupted`.
+7. **Graceful shutdown (SIGTERM):** the server stops accepting requests and gives
+   in-flight generations up to 8 s to finish, which fits inside Docker's default 10 s
+   stop timeout. It then flushes partial content and marks those messages `interrupted`.
+
+### Concurrency rules
+
+- **One active generation per chat.** Sending or regenerating while that chat has a
+  `streaming` message returns `409 generation_in_progress`. The UI prevents this anyway,
+  because the Send button becomes Stop.
+- Generations in different chats run in parallel, up to a cap of 8 in total, after which
+  the server returns `429`.
+- Deleting a chat cancels its active generation first.
+
+### Failure handling
+
+- **No API key set:** sending returns `409 no_api_key`, and the UI links to Settings.
+- **Provider errors** (401 bad key, 402 no credits, 429 rate limited, 5xx, a network
+  drop mid-stream) set the message to `error` with a readable message and keep any
+  partial content. There are **no automatic retries**. The user clicks Retry, which is
+  the same as regenerate.
+- **Context too long:** there's no silent truncation, and OpenRouter's `middle-out`
+  transform is explicitly disabled (`transforms: []`). The error says the conversation is
+  too long for the model and suggests switching to a model with a larger context or
+  starting a new chat.
+
+### Outgoing request shape
+
+- `model`: the chat's current model, or the model picked in the regenerate menu.
+- `messages`: the global custom instructions (if any) as `system`, then the root-to-leaf
+  path, with attachments expanded as described in [02-files.md](02-files.md).
+- `stream: true`, `reasoning: { exclude: true }`, and `usage: { include: true }`.
+- The PDF `file-parser` plugin with the engine chosen for each attachment.
+- Headers `HTTP-Referer: https://github.com/cau777/sprinter` and `X-Title: Sprinter`,
+  for OpenRouter app attribution.
+- **Model can't see images:** if the target model lacks image input but the path
+  contains images, each image is replaced by the text `[image omitted: <filename>. The
+  current model can't view images]`, and the UI shows a one-line warning above the
+  composer. PDFs and text work with any model.
 
 SSE is chosen over WebSockets. The traffic is one-directional (control actions are plain
 POSTs), SSE works through every proxy, and `EventSource`/fetch-stream reconnection is
@@ -65,12 +103,20 @@ doesn't look stalled.
 
 ## Titles
 
-After the first assistant reply completes, a background task asks the title model for a
-short title. The user can rename the chat at any time. A manual rename is never
-overwritten.
+When the **first user message** of a chat is sent, a background task asks the title
+model for a short title, based only on that message. This runs in parallel with the
+reply, so the title is usually ready before the reply finishes. It reaches the client
+as an `event: title` on that reply's SSE stream. If the title isn't ready when the reply
+finishes, that first stream stays open after `done` until the `title` event is sent
+(10 s at most). A client that missed it still sees the title on its next chat-list
+fetch.
+
+- **Title model:** the one set in Settings. If none is set, the chat's model is used.
+- If title generation fails, the title falls back to the first ~60 characters of the
+  message.
+- The user can rename the chat at any time. A manual rename is never overwritten.
 
 ## Search
 
-Search uses SQLite FTS5 over message content and chat titles (assuming SQLite, which the
-backend doc will confirm). Results link to the chat, and to the matching message where
+Search uses SQLite FTS5 over message content and chat titles. Results link to the chat, and to the matching message where
 possible.

@@ -46,6 +46,7 @@ These go in the README with example Caddy and nginx snippets.
 | `BIND` / `PORT` | `0.0.0.0` / `8080` | Listen address |
 | `TRUSTED_PROXIES` | _(empty)_ | CIDRs whose `X-Forwarded-For` is trusted |
 | `BACKUP_KEEP` | `7` | Number of daily DB snapshots to keep |
+| `WORKER_THREADS` | `2` | Tokio worker threads |
 | `RUST_LOG` | `info` | Log filter. Logs are written to stdout as JSON. |
 | `SPRINTER_INSECURE_COOKIES` | `false` | Development only: drops the `Secure` cookie flag for plain-HTTP localhost |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Override for tests (fake OpenRouter). See [11-testing.md](11-testing.md). |
@@ -85,3 +86,4 @@ The chat menu has an **Export** option with two formats:
   attachment metadata. Meant for archiving or re-importing later.
 
 Attachment files are not embedded in either format. Import is not in v1.
+The file is named `<slugified-title>-<YYYY-MM-DD>.md|json`.

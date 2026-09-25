@@ -71,8 +71,12 @@ Google Fonts, so the PWA works offline and makes no third-party requests.
     being generated glows.
   - **Error, cancelled, or interrupted:** the rule uses the semantic color, with an inline
     note and a Retry button.
-- **Message footer:** `‹ 2 / 3 ›` branch picker (accent), Copy · Retry · Edit, and on the
-  right `tokens · $cost` in mono, taken from OpenRouter's usage data.
+- **Message footers:**
+  - Assistant: `‹ 2 / 3 ›` branch picker (accent), Copy, and Retry, where Retry has a
+    dropdown to retry with a different model. On the right, `tokens · $cost` in mono,
+    taken from OpenRouter's usage data.
+  - User: Edit and Copy, shown on hover (desktop) or long-press (touch), plus the branch
+    picker when the message has sibling edits.
 - **Code blocks:** `--code-bg`, a language label, and a Copy button. Syntax colors are
   tinted toward cyan and blue, with no rainbow theme.
 - **Composer:** a floating glass panel with a soft cyan shadow underneath, an auto-growing

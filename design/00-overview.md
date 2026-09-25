@@ -51,6 +51,7 @@ model provider.
 | [09-data-model.md](09-data-model.md) | SQLite schema | Decided |
 | [10-api.md](10-api.md) | HTTP API and SSE protocol | Decided |
 | [11-testing.md](11-testing.md) | E2E (Playwright + fake OpenRouter), backend tests | Decided |
+| [12-implementation-plan.md](12-implementation-plan.md) | Milestones M0–M9, repo layout, risks | Active |
 
 ## Open questions
 

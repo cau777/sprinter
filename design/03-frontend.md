@@ -14,7 +14,9 @@ Status: **Decided**
 | Routing | TanStack Router |
 | Server state | TanStack Query |
 | PWA | vite-plugin-pwa (Workbox) |
-| Language | TypeScript |
+| Language | TypeScript (strict) |
+| API types | Generated from the Rust structs with `ts-rs` into `web/src/api/types.gen.ts`. There's no handwritten duplication, and a type change breaks the TS build. |
+| Package manager | npm workspaces (`web`, `e2e`) |
 
 ## Why assistant-ui
 
@@ -73,6 +75,25 @@ Offline mode is a **read-only cache**:
 - Mermaid runs with `securityLevel: 'strict'`.
 - All lazy chunks are precached by the service worker after the first load, so math and
   diagrams also render offline.
+
+## Input conventions
+
+- **Desktop:** Enter sends and Shift+Enter adds a newline. **Touch devices:** Enter adds
+  a newline and sending uses the button. Detected with `(pointer: coarse)`.
+- Esc stops a streaming reply (when the composer is focused), or closes a dialog.
+- Ctrl/⌘+K opens search. Ctrl/⌘+Shift+O starts a new chat.
+- Paste an image or file into the composer, or drop it anywhere on the chat, to attach.
+
+## First run
+
+After the first login with no OpenRouter key set, the app opens a short setup screen:
+1. Paste the API key (validated right away).
+2. Pick a default model from the model list, with a search box. Setting favorites and a
+   title model is optional.
+
+The setup screen is skipped once a key exists. Until then, sending is disabled and the
+composer links to setup. The model list is public on OpenRouter, so the picker works
+before a key is set.
 
 ## Build and serving
 

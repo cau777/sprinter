@@ -47,7 +47,7 @@ Status: **Decided**
 |---|---|---|
 | POST | `/api/chats/:id/messages` | `{parent_id: string\|null, content, attachment_ids: [], model?}`. Inserts the user message plus an assistant message with status `streaming`, sets `current_leaf_id`, starts generation, and returns `{user_message, assistant_message}`. **Edit** is the same call with `parent_id` set to the edited message's parent. |
 | POST | `/api/chats/new/messages` | Same body, but creates the chat first. Returns the chat as well. This avoids empty chats in the sidebar. |
-| POST | `/api/messages/:id/regenerate` | `{model?}` on an assistant message creates a sibling assistant message and starts generation. |
+| POST | `/api/messages/:id/regenerate` | `{model?}` on an assistant message creates a sibling assistant message and starts generation. `model` applies to this retry only and doesn't change the chat's model. |
 | POST | `/api/messages/:id/cancel` | Stops the generation and keeps the partial content. |
 | GET | `/api/messages/:id/stream` | **SSE**, described below. |
 
@@ -68,8 +68,13 @@ event: error      data: {"status":"error","message":"Provider returned 429"}
   showing with no text yet.
 - Several subscribers are allowed, for example the same chat open on a phone and a
   laptop.
-- The chat title arrives separately. The client refetches the chat list when a `done`
-  event is the chat's first, or the server pushes a `title` event on the first stream.
+- `event: title  data: {"chat_id":"…","title":"…"}` is sent on the stream of a chat's
+  first reply once the title is ready. That stream stays open after `done` until the
+  title is sent (10 s at most), so a stream **ends** at server close, not at `done` (see
+  [01-chat.md](01-chat.md)).
+- Common error codes: `no_api_key` (409), `generation_in_progress` (409),
+  `too_many_generations` (429), `unsupported_file_type` (415), `file_too_large` (413),
+  `not_found` (404), `rate_limited` (429).
 
 ## Search
 
@@ -81,7 +86,7 @@ event: error      data: {"status":"error","message":"Provider returned 429"}
 
 | Method | Path | Notes |
 |---|---|---|
-| PUT | `/api/uploads` | Raw body with the filename in the `X-Filename` header (URL-encoded). Streamed to disk. Returns `{id, filename, kind, mime, size}`. Returns `413` if the file is over the limit and `415` for unsupported types. |
+| PUT | `/api/uploads` | Raw body with the filename in the `X-Filename` header (URL-encoded) and `X-Sprinter: 1`. Streamed to disk. Returns `{id, filename, kind, mime, size}`. Returns `413` if the file is over the limit and `415` for unsupported types. |
 | GET | `/api/uploads/:id` | The file content. Security headers are listed in [02-files.md](02-files.md). |
 | DELETE | `/api/uploads/:id` | Only allowed while the upload isn't attached to anything (removing a chip in the composer). Otherwise returns `409`. |
 

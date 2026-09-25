@@ -5,26 +5,36 @@ Status: **Decided**
 ## Model
 
 - One master password, provided through `SPRINTER_PASSWORD`. There are no user accounts.
-- At startup the server derives an Argon2id hash of the password and keeps only that hash
-  in memory. Login compares against it in constant time.
+- The `settings` table stores an Argon2id PHC hash of the password (`password_hash`).
+  At startup the server checks `SPRINTER_PASSWORD` against it:
+  - **No hash yet** (first start): hash the password and store it.
+  - **Mismatch** (the password was changed): delete all sessions, mark the stored
+    OpenRouter key as unreadable (see [07-settings.md](07-settings.md)), and store the
+    new hash.
+- Login verifies the submitted password against this hash. Argon2 verification is
+  constant-time.
 - On login the server issues an opaque random session token (256-bit), stored **hashed**
   in a `sessions` table along with created/last-seen time and the user agent.
 
 ## Session cookie
 
-- `HttpOnly; Secure; SameSite=Strict; Path=/`
+- Name `__Host-sprinter` with `HttpOnly; Secure; SameSite=Strict; Path=/`. With
+  `SPRINTER_INSECURE_COOKIES` it becomes `sprinter` without `Secure`, because the
+  `__Host-` prefix requires `Secure`.
 - **Sliding 30-day expiry:** activity refreshes the expiry, at most once per hour to
   limit DB writes.
 - `Secure` can be relaxed for plain-HTTP localhost development with a dev flag.
 
 ## Protection
 
-- Failed login attempts are rate-limited, both in total and per IP (for example 5 per
-  minute, then exponential backoff).
+- Failed login attempts are rate-limited **per IP**: 5 per minute, then exponential
+  backoff capped at 15 minutes. A looser **global** limit (30 failures per minute) slows
+  distributed guessing without locking you out, because existing sessions are never
+  affected by either limit. The client IP comes from `TRUSTED_PROXIES` rules in
+  [08-deployment.md](08-deployment.md).
 - CSRF: `SameSite=Strict` plus requiring `Content-Type: application/json` or a custom
   header on mutating requests.
-- Changing `SPRINTER_PASSWORD` invalidates all sessions. The server stores a fingerprint
-  of the password hash and wipes sessions when it changes.
+- Changing `SPRINTER_PASSWORD` invalidates all sessions (see Model above).
 
 ## UX
 

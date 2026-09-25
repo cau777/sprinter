@@ -1,7 +1,6 @@
 # 04: Backend
 
-Status: **Decided** (stack). The schema will be written after the file handling is
-finalized.
+Status: **Decided**
 
 ## Stack
 
@@ -13,6 +12,10 @@ finalized.
 | HTTP client (OpenRouter) | `reqwest` with rustls (no OpenSSL), streaming SSE parsing |
 | Static assets | `rust-embed`, with the Vite build embedded in the binary |
 | Allocator | `mimalloc`. musl's default allocator is slow under concurrency. |
+| Queries | Runtime `sqlx::query_as` with `FromRow`. **No** compile-time `query!` macros, so there's no `DATABASE_URL` or `.sqlx` offline cache to maintain. |
+| SQLite build | `libsqlite3-sys` bundled (FTS5 enabled; check this at scaffold) |
+| Crypto | `argon2`, `chacha20poly1305`, `sha2`, `rand` |
+| TS types | `ts-rs` derives on API structs, exported by `cargo run --bin gen-types` |
 | Image | Static `x86_64/aarch64-unknown-linux-musl` binary on `scratch` (or distroless/static), running as a non-root user |
 
 ## Memory
@@ -34,23 +37,29 @@ memory use comes from our own choices, so we set these deliberately:
 
 Target: **under 30 MB RSS idle, under 100 MB under normal use.** Peaks around 200 MB are possible when a request carries the maximum attachment load (100 MB raw, base64-encoded).
 
-## Configuration (env vars)
+## Configuration
 
-| Var | Default | Purpose |
-|---|---|---|
-| `SPRINTER_PASSWORD` | _(required)_ | Master password. The server refuses to start without it. |
-| `DATA_DIR` | `/var/lib/sprinter` | All persistent state |
-| `PORT` | `8080` | Listen port |
-| `BIND` | `0.0.0.0` | Listen address |
+The canonical env var list and `DATA_DIR` layout are in
+[08-deployment.md](08-deployment.md). The OpenRouter API key and model defaults are
+**not** env vars. They live in the DB and are edited on the Settings page.
 
-The OpenRouter API key and model defaults are **not** env vars. They live in the DB and
-are edited on the Settings page.
+## HTTP hardening
 
-## DATA_DIR layout (initial)
+- **CSP** on the SPA:
+  `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`.
+  KaTeX and Mermaid need inline styles. No third-party origins are loaded.
+- Also sent: `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and
+  `Permissions-Policy` denying the camera, microphone and geolocation.
+- JSON request bodies are capped at 1 MB. Upload bodies are governed by
+  [02-files.md](02-files.md).
+- **Logs** never contain message content, file contents, the password, or the API key.
+  Only method, path template, status, latency and IDs are logged.
 
-```
-$DATA_DIR/
-  sprinter.db        # SQLite (plus -wal / -shm)
-  uploads/           # see 02-files.md
-  tmp/               # in-progress uploads, on the same filesystem so rename is atomic
-```
+## Background tasks
+
+One Tokio interval scheduler runs:
+- **Hourly:** upload GC and the `tmp/` sweep ([02-files.md](02-files.md)), and deleting
+  expired sessions.
+- **Daily at 03:00 UTC, and at shutdown:** the `VACUUM INTO` DB snapshot and pruning old
+  snapshots ([08-deployment.md](08-deployment.md)).
+- **Hourly:** refreshing the model list cache.
