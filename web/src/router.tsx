@@ -9,6 +9,7 @@ import { fetchSettings } from "./api/settings";
 const AssistantStoreSpike = lazy(() => import("./routes/AssistantStoreSpike").then((module) => ({ default: module.AssistantStoreSpike })));
 const Setup = lazy(() => import("./routes/Setup").then((module) => ({ default: module.Setup })));
 const SettingsPage = lazy(() => import("./routes/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+const ChatPage = lazy(() => import("./routes/ChatPage").then((module) => ({ default: module.ChatPage })));
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
@@ -67,7 +68,16 @@ const spikeRoute = createRoute({
   component: () => <Suspense fallback={<div className="route-loading">Opening runtime lab…</div>}><AssistantStoreSpike /></Suspense>,
 });
 
-const routeTree = rootRoute.addChildren([loginRoute, appRoute.addChildren([homeRoute, setupRoute, settingsRoute, spikeRoute])]);
+const chatRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/$chatId",
+  component: function ChatRoute() {
+    const { chatId } = chatRoute.useParams();
+    return <Suspense fallback={<div className="route-loading">Opening conversation…</div>}><ChatPage chatId={chatId} /></Suspense>;
+  },
+});
+
+const routeTree = rootRoute.addChildren([loginRoute, appRoute.addChildren([homeRoute, setupRoute, settingsRoute, spikeRoute, chatRoute])]);
 
 export const router = createRouter({ routeTree });
 
