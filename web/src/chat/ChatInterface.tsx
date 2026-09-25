@@ -11,12 +11,13 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, RotateCw, Sparkles, Square } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
-import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, updateChat, watchMessage } from "../api/chats";
+import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, switchBranch, updateChat, watchMessage } from "../api/chats";
 import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings } from "../api/settings";
 import { DefaultModelPicker } from "../components/DefaultModelPicker";
 import { ModelPicker } from "../components/ModelPicker";
+import { siblingsFor, visiblePath } from "./branch";
 
 type Props = { chatId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
@@ -57,6 +58,7 @@ export function ChatInterface({ chatId }: Props) {
     void queryClient.invalidateQueries({ queryKey: ["chats"] });
   } });
   const [draftError, setDraftError] = useState<string>();
+  const [retryModels, setRetryModels] = useState<Record<string, string>>({});
   const detail = chatQuery.data;
 
   useEffect(() => {
@@ -67,17 +69,7 @@ export function ChatInterface({ chatId }: Props) {
     return () => media.removeEventListener("change", update);
   }, []);
 
-  const visibleMessages = useMemo(() => {
-    if (!detail?.current_leaf_id) return [] as ChatMessage[];
-    const byId = new Map(detail.messages.map((message) => [message.id, message]));
-    const path: ChatMessage[] = [];
-    let cursor = byId.get(detail.current_leaf_id);
-    while (cursor) {
-      path.unshift(cursor);
-      cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined;
-    }
-    return path;
-  }, [detail]);
+  const visibleMessages = useMemo(() => visiblePath(detail?.messages ?? [], detail?.current_leaf_id ?? null), [detail]);
   const streamingMessage = visibleMessages.find((message) => message.role === "assistant" && message.status === "streaming");
   const latestAssistant = visibleMessages.at(-1)?.role === "assistant" ? visibleMessages.at(-1) : undefined;
 
@@ -114,12 +106,19 @@ export function ChatInterface({ chatId }: Props) {
   });
 
   const retry = useMutation({
-    mutationFn: (messageId: string) => regenerateMessage(messageId),
+    mutationFn: ({ messageId, model }: { messageId: string; model?: string }) => regenerateMessage(messageId, model),
     onSuccess: ({ assistant_message }) => {
       if (!chatId) return;
       queryClient.setQueryData<ChatDetail>(["chat", chatId], (current) => current ? { ...current, current_leaf_id: assistant_message.id, messages: [...current.messages, assistant_message] } : current);
     },
     onError: (error) => setDraftError(error instanceof ApiError ? error.message : "Could not retry this response."),
+  });
+  const switchMutation = useMutation({
+    mutationFn: (messageId: string) => switchBranch(chatId!, messageId),
+    onSuccess: ({ current_leaf_id }) => {
+      queryClient.setQueryData<ChatDetail>(["chat", chatId], (current) => current ? { ...current, current_leaf_id } : current);
+    },
+    onError: (error) => setDraftError(error instanceof ApiError ? error.message : "Could not switch branches."),
   });
 
   const messageList: RuntimeMessage[] = visibleMessages.map((message) => ({
@@ -147,7 +146,7 @@ export function ChatInterface({ chatId }: Props) {
     },
     onReload: async (parentId) => {
       const original = visibleMessages.find((message) => message.role === "assistant" && message.parent_id === parentId);
-      if (original) retry.mutate(original.id);
+      if (original) retry.mutate({ messageId: original.id });
     },
     onCancel: async () => { if (streamingMessage) await cancelMessage(streamingMessage.id).catch(() => undefined); },
   });
@@ -174,14 +173,34 @@ export function ChatInterface({ chatId }: Props) {
         <ThreadPrimitive.Viewport className="chat-thread" turnAnchor="bottom">
           <ThreadPrimitive.Messages>{({ message }) => {
             const item = messageList.find((candidate) => candidate.id === message.id);
+            const original = detail?.messages.find((candidate) => candidate.id === message.id);
+            const siblings = original && detail ? siblingsFor(detail.messages, original) : [];
+            const branchIndex = siblings.findIndex((candidate) => candidate.id === message.id);
             const user = message.role === "user";
+            const editing = user && message.composer.isEditing;
             return <MessagePrimitive.Root key={message.id} className="chat-message" data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
               <div className="chat-message-role">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
-              <div className="chat-message-content"><MessagePrimitive.Parts /></div>
+              {editing ? <ComposerPrimitive.Root className="composer-card chat-composer chat-edit-composer">
+                <ComposerPrimitive.Input aria-label="Message" placeholder="Edit message…" rows={2} />
+                <div className="composer-toolbar"><span className="enter-hint">Press enter to save</span><div className="composer-right"><ComposerPrimitive.Cancel className="edit-cancel-button">Cancel</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="send-button" aria-label="Save edited message"><ArrowUpRight size={17} /></ComposerPrimitive.Send></div></div>
+              </ComposerPrimitive.Root> : <div className="chat-message-content"><MessagePrimitive.Parts /></div>}
               {!user && item?.generationStatus === "error" && <div className="chat-message-error" role="alert">{item.error ?? "The response could not be completed."}</div>}
               {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="chat-message-state">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
-              {user && <div className="chat-message-tools"><ActionBarPrimitive.Root><ActionBarPrimitive.Edit>Edit</ActionBarPrimitive.Edit></ActionBarPrimitive.Root></div>}
-              {!user && item?.generationStatus !== "streaming" && <div className="chat-message-tools"><ActionBarPrimitive.Root><ActionBarPrimitive.Reload><RotateCw size={12} /> Retry</ActionBarPrimitive.Reload></ActionBarPrimitive.Root></div>}
+              <div className="chat-message-tools">
+                {user && <ActionBarPrimitive.Root><ActionBarPrimitive.Edit>Edit</ActionBarPrimitive.Edit></ActionBarPrimitive.Root>}
+                {!user && item?.generationStatus !== "streaming" && <>
+                  <button type="button" onClick={() => retry.mutate({ messageId: message.id, model: retryModels[message.id] || undefined })} disabled={retry.isPending}><RotateCw size={12} /> Retry</button>
+                  <select aria-label={`Retry model for message ${message.id}`} value={retryModels[message.id] ?? ""} onChange={(event) => setRetryModels((current) => ({ ...current, [message.id]: event.target.value }))}>
+                    <option value="">Same model</option>
+                    {modelQuery.data?.items.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
+                  </select>
+                </>}
+                {siblings.length > 1 && <div className="message-branch-picker" aria-label={`${user ? "User" : "Assistant"} branch`}>
+                  <button type="button" aria-label={`Previous branch for message ${message.id}`} disabled={branchIndex <= 0 || switchMutation.isPending} onClick={() => switchMutation.mutate(siblings[branchIndex - 1].id)}>‹</button>
+                  <span>{branchIndex + 1} / {siblings.length}</span>
+                  <button type="button" aria-label={`Next branch for message ${message.id}`} disabled={branchIndex >= siblings.length - 1 || switchMutation.isPending} onClick={() => switchMutation.mutate(siblings[branchIndex + 1].id)}>›</button>
+                </div>}
+              </div>
             </MessagePrimitive.Root>;
           }}</ThreadPrimitive.Messages>
         </ThreadPrimitive.Viewport>

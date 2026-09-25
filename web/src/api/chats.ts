@@ -7,6 +7,7 @@ import type {
   NewChatMessageResponse,
   RegenerateMessageResponse,
   SendMessageResponse,
+  SwitchBranchResponse,
 } from "./types.gen";
 
 export type { ChatPage, ChatSummary };
@@ -52,10 +53,12 @@ export const sendToChat = async (id: string, parent_id: string | null, content: 
   });
   return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
 };
-export const regenerateMessage = async (id: string): Promise<RetryResponse> => {
-  const result = await apiRequest<RegenerateMessageResponse>(`/api/messages/${encodeURIComponent(id)}/regenerate`, { method: "POST", body: jsonBody({}) });
+export const regenerateMessage = async (id: string, model?: string): Promise<RetryResponse> => {
+  const result = await apiRequest<RegenerateMessageResponse>(`/api/messages/${encodeURIComponent(id)}/regenerate`, { method: "POST", body: jsonBody(model ? { model } : {}) });
   return { assistant_message: asMessage(result.assistant_message) };
 };
+export const switchBranch = (chatId: string, messageId: string) =>
+  apiRequest<SwitchBranchResponse>(`/api/chats/${encodeURIComponent(chatId)}/switch`, { method: "POST", body: jsonBody({ message_id: messageId }) });
 export const cancelMessage = (id: string) => apiRequest<void>(`/api/messages/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" });
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));

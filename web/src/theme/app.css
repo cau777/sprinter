@@ -167,6 +167,10 @@ button { color: inherit; }
 .chat-message-tools { display: flex; align-items: center; gap: 9px; margin-top: 9px; color: #738198; }
 .chat-message-tools button { border: 0; padding: 3px 5px; border-radius: 5px; background: transparent; color: inherit; font-size: 9px; cursor: pointer; }
 .chat-message-tools button:hover { color: var(--accent); background: var(--accent-soft); }
+.chat-message-tools select { max-width: 150px; border: 1px solid rgba(120,160,220,.18); border-radius: 6px; background: #121c2d; color: #a6b3c6; font: 9px "JetBrains Mono",monospace; padding: 3px 6px; }
+.message-branch-picker { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; color: #9aaac1; font: 10px "JetBrains Mono",monospace; }
+.message-branch-picker button { font-size: 17px; line-height: .8; }
+.message-branch-picker button:disabled { opacity: .35; cursor: default; }
 .chat-message-error,.chat-send-error { margin-top: 9px; color: #ff9aab; font-size: 10px; }
 .chat-message-state { margin-top: 8px; color: #8794aa; font-size: 9px; }
 .chat-send-error { max-width: 710px; margin: 0 auto 8px; padding: 8px 10px; border: 1px solid rgba(255,93,122,.18); border-radius: 8px; background: rgba(255,93,122,.04); }
