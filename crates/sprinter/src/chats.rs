@@ -172,6 +172,10 @@ async fn delete_handler(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ChatApiError> {
+    match state.generation.cancel_chat(&id).await {
+        Ok(()) | Err(crate::generation::GenerationError::NotFound) => {}
+        Err(_) => return Err(ChatApiError::internal(&headers)),
+    }
     delete_chat(&state.pool, &id)
         .await
         .map_err(|e| ChatApiError::from_error(e, &headers))?;

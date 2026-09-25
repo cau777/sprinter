@@ -6,6 +6,7 @@ web/.vite/
 
 # Rust build output
 /target/
+/crates/sprinter/bindings/
 
 # Local application state and databases
 /data/

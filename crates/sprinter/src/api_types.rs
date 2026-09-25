@@ -3,7 +3,10 @@ use crate::settings::{
 };
 use crate::{
     chats::{ChatDetail, ChatPage, ChatSummary},
-    messages::{MessageAttachment, MessageRecord},
+    messages::{
+        MessageAttachment, MessageRecord, NewChatMessageResponse, RegenerateMessageResponse,
+        SendMessageResponse,
+    },
 };
 use serde::Serialize;
 use std::{error::Error, fs, path::PathBuf};
@@ -61,6 +64,18 @@ pub fn export() -> Result<(), Box<dyn Error>> {
         format!(
             "export type MessageAttachment = {};",
             MessageAttachment::inline()
+        ),
+        format!(
+            "export type SendMessageResponse = {};",
+            SendMessageResponse::inline()
+        ),
+        format!(
+            "export type NewChatMessageResponse = {};",
+            NewChatMessageResponse::inline()
+        ),
+        format!(
+            "export type RegenerateMessageResponse = {};",
+            RegenerateMessageResponse::inline()
         ),
     ];
     let contents = format!(

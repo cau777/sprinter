@@ -1,3 +1,12 @@
+use crate::{auth, chats, settings, state::AppState};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    middleware,
+    response::{IntoResponse, Response},
+    routing::post,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use std::{
@@ -20,8 +29,11 @@ pub struct MessageRecord {
     pub model: Option<String>,
     pub generation_id: Option<String>,
     pub finish_reason: Option<String>,
+    #[ts(type = "number | null")]
     pub prompt_tokens: Option<i64>,
+    #[ts(type = "number | null")]
     pub completion_tokens: Option<i64>,
+    #[ts(type = "number | null")]
     pub reasoning_tokens: Option<i64>,
     pub cost: Option<f64>,
     #[ts(type = "number")]
@@ -81,6 +93,295 @@ pub struct PreparedGeneration {
     pub model: String,
     pub prompt: Vec<PromptMessage>,
     pub pdf_engine: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+pub struct SendMessageResponse {
+    pub user_message: MessageRecord,
+    pub assistant_message: MessageRecord,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+pub struct NewChatMessageResponse {
+    pub chat: chats::ChatSummary,
+    pub user_message: MessageRecord,
+    pub assistant_message: MessageRecord,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+pub struct RegenerateMessageResponse {
+    pub assistant_message: MessageRecord,
+}
+
+pub fn router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/api/chats/new/messages", post(send_new_handler))
+        .route("/api/chats/{id}/messages", post(send_handler))
+        .route("/api/messages/{id}/regenerate", post(regenerate_handler))
+        .route_layer(middleware::from_fn_with_state(state, auth::require_session))
+}
+
+async fn send_handler(
+    State(state): State<AppState>,
+    Path(chat_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<SendMessageRequest>,
+) -> Result<Json<SendMessageResponse>, MessageApiError> {
+    let request_id = auth::request_id(&headers);
+    if request
+        .model
+        .as_ref()
+        .is_some_and(|model| model.trim().is_empty())
+    {
+        return Err(MessageApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_model",
+            "Model cannot be empty",
+        ));
+    }
+    let key = preflight_key(&state, &headers).await?;
+    let prepared = send_to_chat(&state.pool, &chat_id, request)
+        .await
+        .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    match state
+        .generation
+        .start(&state, prepared.clone(), key, Some(request_id))
+        .await
+    {
+        Ok(()) => Ok(Json(SendMessageResponse {
+            user_message: prepared
+                .user_message
+                .expect("send exchanges include a user message"),
+            assistant_message: prepared.assistant_message,
+        })),
+        Err(error) => {
+            if let Err(rollback_error) = rollback_generation(&state.pool, &prepared).await {
+                tracing::error!(error = %rollback_error, "could not roll back rejected generation");
+            }
+            Err(MessageApiError::from_generation(error, &headers))
+        }
+    }
+}
+
+async fn send_new_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SendMessageRequest>,
+) -> Result<Json<NewChatMessageResponse>, MessageApiError> {
+    let request_id = auth::request_id(&headers);
+    if request
+        .model
+        .as_ref()
+        .is_some_and(|model| model.trim().is_empty())
+    {
+        return Err(MessageApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_model",
+            "Model cannot be empty",
+        ));
+    }
+    let key = preflight_key(&state, &headers).await?;
+    let default_model = settings::default_model(&state)
+        .await
+        .map_err(|_| MessageApiError::internal(&headers))?;
+    if request.model.is_none() && default_model.is_none() {
+        return Err(MessageApiError::new(
+            &headers,
+            StatusCode::CONFLICT,
+            "no_default_model",
+            "Choose a default model in Settings",
+        ));
+    }
+    let prepared = send_new_chat(&state.pool, default_model.as_deref(), request)
+        .await
+        .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    let chat = match chats::get_chat(&state.pool, &prepared.chat_id).await {
+        Ok(Some(chat)) => chat,
+        _ => {
+            if let Err(rollback_error) = rollback_generation(&state.pool, &prepared).await {
+                tracing::error!(error = %rollback_error, "could not roll back failed new chat lookup");
+            }
+            return Err(MessageApiError::internal(&headers));
+        }
+    };
+    match state
+        .generation
+        .start(&state, prepared.clone(), key, Some(request_id))
+        .await
+    {
+        Ok(()) => Ok(Json(NewChatMessageResponse {
+            chat,
+            user_message: prepared
+                .user_message
+                .expect("send exchanges include a user message"),
+            assistant_message: prepared.assistant_message,
+        })),
+        Err(error) => {
+            if let Err(rollback_error) = rollback_generation(&state.pool, &prepared).await {
+                tracing::error!(error = %rollback_error, "could not roll back rejected generation");
+            }
+            Err(MessageApiError::from_generation(error, &headers))
+        }
+    }
+}
+
+async fn regenerate_handler(
+    State(state): State<AppState>,
+    Path(message_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<RegenerateRequest>,
+) -> Result<Json<RegenerateMessageResponse>, MessageApiError> {
+    let request_id = auth::request_id(&headers);
+    if request
+        .model
+        .as_ref()
+        .is_some_and(|model| model.trim().is_empty())
+    {
+        return Err(MessageApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_model",
+            "Model cannot be empty",
+        ));
+    }
+    let key = preflight_key(&state, &headers).await?;
+    let prepared = regenerate(&state.pool, &message_id, request.model.as_deref())
+        .await
+        .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    match state
+        .generation
+        .start(&state, prepared.clone(), key, Some(request_id))
+        .await
+    {
+        Ok(()) => Ok(Json(RegenerateMessageResponse {
+            assistant_message: prepared.assistant_message,
+        })),
+        Err(error) => {
+            if let Err(rollback_error) = rollback_generation(&state.pool, &prepared).await {
+                tracing::error!(error = %rollback_error, "could not roll back rejected regeneration");
+            }
+            Err(MessageApiError::from_generation(error, &headers))
+        }
+    }
+}
+
+async fn preflight_key(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<secrecy::SecretString, MessageApiError> {
+    match settings::provider_key(state).await {
+        Ok(Some(key)) => Ok(key),
+        Ok(None) | Err(_) => Err(MessageApiError::new(
+            headers,
+            StatusCode::CONFLICT,
+            "no_api_key",
+            "Add or replace the OpenRouter API key in Settings",
+        )),
+    }
+}
+
+struct MessageApiError {
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+    request_id: String,
+}
+
+impl MessageApiError {
+    fn new(
+        headers: &HeaderMap,
+        status: StatusCode,
+        code: &'static str,
+        message: &'static str,
+    ) -> Self {
+        Self {
+            status,
+            code,
+            message,
+            request_id: auth::request_id(headers),
+        }
+    }
+
+    fn internal(headers: &HeaderMap) -> Self {
+        Self::new(
+            headers,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "An internal error occurred",
+        )
+    }
+
+    fn from_message(error: MessageError, headers: &HeaderMap) -> Self {
+        match error {
+            MessageError::NotFound => Self::new(
+                headers,
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "Chat or message not found",
+            ),
+            MessageError::InvalidParent | MessageError::InvalidMessage => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "The message or parent is invalid",
+            ),
+            MessageError::EmptyContent => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "empty_content",
+                "Message content cannot be empty",
+            ),
+            MessageError::GenerationInProgress => Self::new(
+                headers,
+                StatusCode::CONFLICT,
+                "generation_in_progress",
+                "A generation is already active in this chat",
+            ),
+            MessageError::NoDefaultModel => Self::new(
+                headers,
+                StatusCode::CONFLICT,
+                "no_default_model",
+                "Choose a default model in Settings",
+            ),
+            MessageError::Database(_) => Self::internal(headers),
+        }
+    }
+
+    fn from_generation(error: crate::generation::GenerationError, headers: &HeaderMap) -> Self {
+        match error {
+            crate::generation::GenerationError::GenerationInProgress => Self::new(
+                headers,
+                StatusCode::CONFLICT,
+                "generation_in_progress",
+                "A generation is already active in this chat",
+            ),
+            crate::generation::GenerationError::TooManyGenerations => Self::new(
+                headers,
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_generations",
+                "The server is handling its generation limit",
+            ),
+            crate::generation::GenerationError::NotFound => Self::new(
+                headers,
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "Message not found",
+            ),
+            crate::generation::GenerationError::Internal => Self::internal(headers),
+        }
+    }
+}
+
+impl IntoResponse for MessageApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(serde_json::json!({"error":{"code":self.code,"message":self.message,"request_id":self.request_id}})),
+        )
+            .into_response()
+    }
 }
 
 #[derive(Debug, ThisError)]
