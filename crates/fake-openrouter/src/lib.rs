@@ -338,7 +338,10 @@ fn last_user_text(body: &Value) -> String {
 }
 
 fn title_completion(body: &Value, text: &str) -> Value {
-    let cleaned = text
+    let source = text
+        .rsplit_once("\n\n")
+        .map_or(text, |(_, message)| message);
+    let cleaned = source
         .replace("[[slow]]", "")
         .replace("[[error]]", "")
         .replace("[[rich]]", "")

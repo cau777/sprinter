@@ -17,6 +17,7 @@ export class ApiError extends Error {
 export async function apiRequest<T>(path: string, init: RequestInit = {}, options: { redirectOnUnauthorized?: boolean } = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (["POST", "PATCH", "PUT", "DELETE"].includes(init.method?.toUpperCase() ?? "") && !headers.has("Content-Type")) headers.set("X-Sprinter", "1");
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   if (response.status === 401 && options.redirectOnUnauthorized !== false && !path.startsWith("/api/auth/login")) {
     const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
