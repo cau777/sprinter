@@ -5,3 +5,15 @@ export type HealthResponse = { status: string, };
 export type AuthResponse = { ok: boolean, };
 
 export type SessionInfo = { id: string, user_agent: string | null, ip: string | null, created_at: number, last_seen_at: number, expires_at: number, current: boolean, };
+
+export type ApiModel = { id: string, name: string, context_length: number, pricing: ModelPricing, input_modalities: Array<string>, };
+
+export type ModelPricing = { prompt: string, completion: string, };
+
+export type ModelsResponse = { items: Array<ApiModel>, };
+
+export type OpenRouterKeyStatus = { set: boolean, hint: string | null, valid: boolean, readable: boolean, };
+
+export type UploadLimits = { image_bytes: number, pdf_bytes: number, text_bytes: number, files_per_message: number, total_prompt_bytes: number, };
+
+export type SettingsResponse = { openrouter_api_key: OpenRouterKeyStatus, default_model: string | null, title_model: string | null, favorite_models: Array<string>, custom_instructions: string, pdf_engine: string, upload_limits: UploadLimits, };

@@ -1,3 +1,4 @@
+use crate::{auth, settings, state::AppState};
 use axum::{
     Router,
     body::Body,
@@ -10,7 +11,6 @@ use axum::{
 use std::time::Instant;
 use tower_http::{compression::CompressionLayer, limit::RequestBodyLimitLayer};
 use ulid::Ulid;
-use crate::{auth, state::AppState};
 
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../web/dist/"]
@@ -20,6 +20,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .merge(auth::router(state.clone()))
+        .merge(settings::router(state.clone()))
         .fallback(spa_fallback)
         .layer(RequestBodyLimitLayer::new(1024 * 1024))
         .layer(CompressionLayer::new())
@@ -88,12 +89,13 @@ async fn spa_fallback(uri: Uri) -> Response {
     if path == "api" || path.starts_with("api/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let asset = if path.is_empty() {
+    let requested_asset = if path.is_empty() {
         None
     } else {
         Assets::get(path)
     };
-    let asset = asset.or_else(|| Assets::get("index.html"));
+    let is_index = requested_asset.is_none();
+    let asset = requested_asset.or_else(|| Assets::get("index.html"));
     let Some(asset) = asset else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -101,7 +103,7 @@ async fn spa_fallback(uri: Uri) -> Response {
         )
             .into_response();
     };
-    let content_type = mime_type(path);
+    let content_type = mime_type(if is_index { "index.html" } else { path });
     let mut response = Response::new(Body::from(asset.data.into_owned()));
     *response.status_mut() = StatusCode::OK;
     response

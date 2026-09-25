@@ -1,12 +1,6 @@
-mod config;
-mod db;
-mod auth;
-mod logging;
-mod state;
-mod web;
-
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
+use sprinter::{auth, config, db, logging, state, web};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -80,9 +74,12 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
         insecure_cookies = config.insecure_cookies, openrouter_base_url = %config.openrouter_base_url,
         trusted_proxies = ?config.trusted_proxies,
         key_set = false, "starting");
-    axum::serve(listener, web::router(app_state).into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        web::router(app_state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     info!("stopped");
     Ok(())
 }

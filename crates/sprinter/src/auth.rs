@@ -2,7 +2,7 @@ use crate::{
     config::Config,
     state::AppState,
 };
-use sprinter::api_types::{AuthResponse, SessionInfo};
+use crate::api_types::{AuthResponse, SessionInfo};
 use argon2::{password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}, Argon2};
 use axum::{
     body::to_bytes,
@@ -268,7 +268,7 @@ async fn require_json(request: Request, next: Next) -> Response {
         "content_type_required", "Mutating requests must use application/json", None)
 }
 
-async fn require_session(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
+pub async fn require_session(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     if request.method() == Method::POST || request.method() == Method::PATCH || request.method() == Method::PUT || request.method() == Method::DELETE {
         let json = request.headers().get(header::CONTENT_TYPE).and_then(|h| h.to_str().ok())
             .is_some_and(|value| value.to_ascii_lowercase().starts_with("application/json"));
