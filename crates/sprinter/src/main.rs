@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use mimalloc::MiMalloc;
-use sprinter::{auth, config, db, generation::Manager, logging, state, uploads, web};
+use sprinter::{auth, config, db, generation::Manager, logging, operations, state, web};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tracing::{error, info};
@@ -74,9 +74,11 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
     }
     let config = Arc::new(config);
     let app_state = state::AppState::new(pool, config.clone());
-    tokio::spawn(uploads::gc_loop(
+    let maintenance = tokio::spawn(operations::maintenance_loop(app_state.clone()));
+    let backups = tokio::spawn(operations::daily_snapshot_loop(
         app_state.pool.clone(),
         config.data_dir.clone(),
+        config.backup_keep,
     ));
     let listener = TcpListener::bind(address).await?;
     info!(version = env!("CARGO_PKG_VERSION"), bind = %address,
@@ -86,18 +88,27 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
         trusted_proxies = ?config.trusted_proxies,
         key_set = false, "starting");
     let generation_manager = app_state.generation.clone();
-    axum::serve(
+    let pool = app_state.pool.clone();
+    let data_dir = config.data_dir.clone();
+    let backup_keep = config.backup_keep;
+    let result = axum::serve(
         listener,
         web::router(app_state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;
-        tokio::spawn(async move {
-            generation_manager.shutdown().await;
-        });
+        generation_manager.shutdown().await;
     })
-    .await?;
+    .await;
+    maintenance.abort();
+    backups.abort();
+    let _ = maintenance.await;
+    let _ = backups.await;
+    if let Err(error) = operations::write_snapshot(&pool, &data_dir, backup_keep).await {
+        error!(error = %error, "snapshot failed");
+    }
     info!("stopped");
+    result?;
     Ok(())
 }
 

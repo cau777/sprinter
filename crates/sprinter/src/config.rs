@@ -70,6 +70,9 @@ impl Config {
         if log_keep_days == 0 {
             return Err(Box::new(ConfigError::MustBePositive("LOG_KEEP_DAYS")));
         }
+        if backup_keep == 0 {
+            return Err(Box::new(ConfigError::MustBePositive("BACKUP_KEEP")));
+        }
 
         Ok(Self {
             master_password: env::var("SPRINTER_PASSWORD").ok().map(SecretString::from),

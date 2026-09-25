@@ -9,6 +9,7 @@ pub mod generation;
 pub mod logging;
 pub mod messages;
 pub mod openrouter;
+pub mod operations;
 pub mod search;
 pub mod settings;
 pub mod state;
