@@ -60,10 +60,13 @@ pub async fn write_snapshot(
     let backups = data_dir.join("backups");
     fs::create_dir_all(&backups)?;
     set_dir_mode_0700(&backups)?;
+    let temp_dir = data_dir.join("tmp");
+    fs::create_dir_all(&temp_dir)?;
+    set_dir_mode_0700(&temp_dir)?;
     let today = Utc::now().date_naive();
     let filename = format!("sprinter-{}.db", today.format("%Y-%m-%d"));
     let target = backups.join(filename);
-    let temp = backups.join(format!(
+    let temp = temp_dir.join(format!(
         ".{}.tmp",
         target.file_name().unwrap().to_string_lossy()
     ));
@@ -231,6 +234,19 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(files.len(), 1);
         let snapshot = files[0].path();
+        assert!(fs::read_dir(data_dir.join("tmp")).unwrap().next().is_none());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&snapshot).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(&backups).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
         let backup = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(SqliteConnectOptions::new().filename(&snapshot))
