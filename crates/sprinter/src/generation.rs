@@ -663,6 +663,8 @@ impl Manager {
             .expect("generation buffer poisoned")
             .content
             .clone();
+        let chars = content.chars().count();
+        let preview = log_preview(&content, 200);
         let _ = sqlx::query(
             "UPDATE messages SET content = ?, status = 'cancelled', updated_at = ? WHERE id = ?",
         )
@@ -671,6 +673,13 @@ impl Manager {
         .bind(id)
         .execute(&self.pool)
         .await;
+        tracing::info!(
+            gen = %id,
+            status = "cancelled",
+            chars,
+            preview,
+            "cancelled"
+        );
         let event = StreamEvent::Done {
             status: "cancelled".into(),
             finish_reason: None,
@@ -689,12 +698,21 @@ impl Manager {
             .expect("generation buffer poisoned")
             .content
             .clone();
+        let chars = content.chars().count();
+        let preview = log_preview(&content, 200);
         let _ = sqlx::query("UPDATE messages SET content = ?, status = 'interrupted', error = 'Server is shutting down', updated_at = ? WHERE id = ?")
             .bind(content)
             .bind(now_ms())
             .bind(id)
             .execute(&self.pool)
-            .await;
+        .await;
+        tracing::warn!(
+            gen = %id,
+            status = "interrupted",
+            chars,
+            preview,
+            "interrupted"
+        );
         let event = StreamEvent::Done {
             status: "interrupted".into(),
             finish_reason: None,
@@ -713,12 +731,22 @@ impl Manager {
             .expect("generation buffer poisoned")
             .content
             .clone();
+        let chars = content.chars().count();
+        let preview = log_preview(&content, 200);
         let _ = sqlx::query("UPDATE messages SET content = ?, status = 'interrupted', error = 'Server shutdown deadline expired', updated_at = ? WHERE id = ? AND status = 'streaming'")
             .bind(content)
             .bind(now_ms())
             .bind(&running.id)
             .execute(&self.pool)
-            .await;
+        .await;
+        tracing::warn!(
+            gen = %running.id,
+            chat = %running.chat_id,
+            status = "interrupted",
+            chars,
+            preview,
+            "interrupted"
+        );
     }
 
     async fn finish_error(&self, id: &str, running: &Running, message: String) {
@@ -728,8 +756,19 @@ impl Manager {
             .expect("generation buffer poisoned")
             .content
             .clone();
+        let chars = content.chars().count();
+        let preview = log_preview(&content, 200);
+        let error = log_preview(&message, 200);
         let _ = sqlx::query("UPDATE messages SET content = ?, status = 'error', error = ?, updated_at = ? WHERE id = ?")
             .bind(content).bind(&message).bind(now_ms()).bind(id).execute(&self.pool).await;
+        tracing::warn!(
+            gen = %id,
+            status = "error",
+            chars,
+            preview,
+            error,
+            "error"
+        );
         let event = StreamEvent::Error {
             status: "error".into(),
             message,

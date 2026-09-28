@@ -65,6 +65,12 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
     let address: SocketAddr = config.bind_address;
     let password = config.master_password.as_ref().expect("checked above");
     auth::initialize_password(&pool, password).await?;
+    let key_set = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'openrouter_api_key')",
+    )
+    .fetch_one(&pool)
+    .await?
+        != 0;
     let interrupted = Manager::recover_interrupted(&pool).await?;
     if interrupted > 0 {
         info!(
@@ -81,7 +87,7 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
         log_keep_days = config.log_keep_days,
         insecure_cookies = config.insecure_cookies, openrouter_base_url = %config.openrouter_base_url,
         trusted_proxies = ?config.trusted_proxies,
-        key_set = false, "starting");
+        key_set, "starting");
     let generation_manager = app_state.generation.clone();
     let result = axum::serve(
         listener,
