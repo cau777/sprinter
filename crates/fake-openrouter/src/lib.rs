@@ -113,6 +113,7 @@ fn model(
     json!({
         "id": id,
         "name": name,
+        "created": now_secs(),
         "context_length": context_length,
         "pricing": {"prompt": prompt, "completion": completion, "request": "0", "image": "0"},
         "architecture": {"modality": if vision {"text+image->text"} else {"text->text"}, "input_modalities": input_modalities, "output_modalities": ["text"], "tokenizer": "fake", "instruct_type": null},

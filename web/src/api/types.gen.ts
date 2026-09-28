@@ -6,7 +6,7 @@ export type AuthResponse = { ok: boolean, };
 
 export type SessionInfo = { id: string, user_agent: string | null, ip: string | null, created_at: number, last_seen_at: number, expires_at: number, current: boolean, };
 
-export type ApiModel = { id: string, name: string, context_length: number, pricing: ModelPricing, input_modalities: Array<string>, };
+export type ApiModel = { id: string, name: string, created_at: number | null, context_length: number, pricing: ModelPricing, input_modalities: Array<string>, };
 
 export type ModelPricing = { prompt: string, completion: string, };
 

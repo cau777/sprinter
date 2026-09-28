@@ -47,6 +47,8 @@ struct CachedModels {
 pub struct ApiModel {
     pub id: String,
     pub name: String,
+    #[ts(type = "number | null")]
+    pub created_at: Option<i64>,
     #[ts(type = "number")]
     pub context_length: u64,
     pub pricing: ModelPricing,
@@ -576,6 +578,7 @@ fn parse_model(value: &Value) -> Option<ApiModel> {
         .get("context_length")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let created_at = value.get("created").and_then(Value::as_i64);
     let pricing = value.get("pricing").cloned().unwrap_or_default();
     let prompt = pricing
         .get("prompt")
@@ -599,6 +602,7 @@ fn parse_model(value: &Value) -> Option<ApiModel> {
     Some(ApiModel {
         id,
         name,
+        created_at,
         context_length,
         pricing: ModelPricing { prompt, completion },
         input_modalities,

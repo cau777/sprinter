@@ -31,7 +31,7 @@ test("changing a chat model affects later messages but keeps earlier model recor
 
   const chatId = new URL(page.url()).pathname.slice(1);
   await page.getByText("test/text", { exact: true }).first().click();
-  await page.getByRole("option", { name: /Fake Vision test\/vision/ }).click();
+  await page.getByRole("button", { name: "Select Fake Vision (test/vision)" }).click();
   await expect.poll(async () => page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).model, chatId)).toBe("test/vision");
 
   await page.getByRole("textbox", { name: "Message" }).fill("Use the new model now.");
