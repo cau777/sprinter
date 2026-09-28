@@ -30,6 +30,8 @@
   --on-accent: #061018;
   --text: #d7deea;
   --text-strong: #fff;
+  /* #6b7690 from the visual spec is only 3.78:1 on --surface (#141b2b).
+     This value is 5.49:1 there, meeting WCAG AA for normal-sized text. */
   --text-muted: #8792a8;
   --danger: #ff5d7a;
   --warning: #ffc857;
@@ -129,9 +131,7 @@ button { color: inherit; }
 .suggestion-card b { color: #d3dbe8; display: block; font-size: 10px; font-weight: 600; white-space: nowrap; }
 .suggestion-card small { color: #77839a; font-size: 9px; white-space: nowrap; }
 .suggestion-icon { flex: 0 0 26px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; font-size: 14px; }
-.suggestion-icon.violet { color: #bdacff; background: rgba(146,118,255,.13); }
-.suggestion-icon.blue { color: #79b8ff; background: rgba(67,144,230,.13); }
-.suggestion-icon.gold { color: #f1cb7a; background: rgba(235,185,74,.12); }
+.suggestion-icon { color: var(--text-muted); background: rgba(135,146,168,.10); }
 .composer-wrap { width: min(100%, 710px); margin-top: auto; }
 .composer-card { padding: 14px 14px 10px; border: 1px solid rgba(120,160,220,.17); border-radius: 15px; background: rgba(19,26,41,.82); box-shadow: 0 10px 44px rgba(61,232,255,.055), 0 18px 60px rgba(0,0,0,.17); }
 .composer-card textarea { width: 100%; display: block; resize: none; border: 0; outline: 0; color: var(--text); background: transparent; min-height: 31px; max-height: 150px; padding: 1px 3px 9px; font-size: 13px; }

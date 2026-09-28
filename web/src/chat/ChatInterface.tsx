@@ -283,9 +283,9 @@ export function ChatInterface({ chatId, messageId }: Props) {
       <h1>What’s on your mind<span>?</span></h1>
       <p className="welcome-copy">A thought, a question, a half-formed idea.<br />Start anywhere. We’ll take it from there.</p>
       <div className="prompt-suggestions">
-        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me think through an idea.", null)}><span className="suggestion-icon violet">✳</span><span><b>Think it through</b><small>Help me explore an idea</small></span></button>
-        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me make something.", null)}><span className="suggestion-icon blue">⌘</span><span><b>Make something</b><small>Write, plan, or create</small></span></button>
-        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me get unstuck.", null)}><span className="suggestion-icon gold">◒</span><span><b>Get unstuck</b><small>Break down a problem</small></span></button>
+        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me think through an idea.", null)}><span className="suggestion-icon">✳</span><span><b>Think it through</b><small>Help me explore an idea</small></span></button>
+        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me make something.", null)}><span className="suggestion-icon">⌘</span><span><b>Make something</b><small>Write, plan, or create</small></span></button>
+        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me get unstuck.", null)}><span className="suggestion-icon">◒</span><span><b>Get unstuck</b><small>Break down a problem</small></span></button>
       </div>
     </div>}
 
