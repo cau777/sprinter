@@ -20,7 +20,11 @@ pub struct ProviderUsage {
 
 #[derive(Clone, Debug)]
 pub enum ProviderEvent {
-    Delta(String),
+    Delta {
+        content: String,
+        provider: Option<String>,
+        generation_id: Option<String>,
+    },
     Annotations(Value),
     Done {
         finish_reason: Option<String>,
@@ -86,6 +90,8 @@ impl OpenRouterClient {
             let mut buffer = String::new();
             let mut finish_reason: Option<String> = None;
             let mut final_usage: Option<ProviderUsage> = None;
+            let mut provider: Option<String> = None;
+            let mut generation_id: Option<String> = None;
             let mut done_sent = false;
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|_| ProviderError {
@@ -106,6 +112,12 @@ impl OpenRouterClient {
                         let value: Value = serde_json::from_str(data).map_err(|_| ProviderError {
                             message: "OpenRouter returned an invalid streaming response".into(), status: None,
                         })?;
+                        if let Some(value) = value.get("provider").and_then(Value::as_str) {
+                            provider = Some(value.to_owned());
+                        }
+                        if let Some(value) = value.get("id").and_then(Value::as_str) {
+                            generation_id = Some(value.to_owned());
+                        }
                         if let Some(error) = value.get("error") {
                             let code = error.get("code").and_then(Value::as_u64).map(|v| v as u16);
                             let provider_error = provider_error(code.unwrap_or(502), Some(value.clone()));
@@ -116,7 +128,13 @@ impl OpenRouterClient {
                             finish_reason = Some(reason.to_owned());
                         }
                         if let Some(content) = choice.and_then(|c| c.pointer("/delta/content")).and_then(Value::as_str) {
-                            if !content.is_empty() { yield ProviderEvent::Delta(content.to_owned()); }
+                            if !content.is_empty() {
+                                yield ProviderEvent::Delta {
+                                    content: content.to_owned(),
+                                    provider: provider.clone(),
+                                    generation_id: generation_id.clone(),
+                                };
+                            }
                         }
                         if let Some(annotations) = choice
                             .and_then(|c| c.pointer("/message/annotations").or_else(|| c.pointer("/delta/annotations")))
@@ -304,7 +322,7 @@ mod tests {
         let mut finished = false;
         while let Some(event) = stream.next().await {
             match event.unwrap() {
-                ProviderEvent::Delta(content) => deltas.push_str(&content),
+                ProviderEvent::Delta { content, .. } => deltas.push_str(&content),
                 ProviderEvent::Annotations(_) => {}
                 ProviderEvent::Done { usage, .. } => {
                     cost = usage.and_then(|usage| usage.cost);
@@ -357,7 +375,7 @@ mod tests {
         let mut deltas = false;
         let error = loop {
             match stream.next().await.unwrap() {
-                Ok(ProviderEvent::Delta(_)) => deltas = true,
+                Ok(ProviderEvent::Delta { .. }) => deltas = true,
                 Ok(_) => {}
                 Err(error) => break error,
             }

@@ -510,10 +510,15 @@ impl Manager {
                         }
                         _ = ticker.tick() => self.flush(&assistant_id, &running).await,
                         event = stream.next() => match event {
-                            Some(Ok(ProviderEvent::Delta(content))) => {
+                            Some(Ok(ProviderEvent::Delta { content, provider, generation_id })) => {
                                 if !content.is_empty() && !first_token {
                                     first_token = true;
-                                    tracing::info!(ttft_ms = generation_started.elapsed().as_millis(), "first token");
+                                    tracing::info!(
+                                        ttft_ms = generation_started.elapsed().as_millis(),
+                                        provider = provider.as_deref(),
+                                        or_id = generation_id.as_deref(),
+                                        "first token"
+                                    );
                                 }
                                 let mut buffer = running.buffer.write().expect("generation buffer poisoned");
                                 buffer.content.push_str(&content);
