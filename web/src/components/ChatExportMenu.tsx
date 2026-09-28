@@ -6,7 +6,7 @@ export function ChatExportMenu({ chatId }: Props) {
   const base = `/api/chats/${encodeURIComponent(chatId)}/export`;
   return <Dropdown>
     <Dropdown.Trigger>
-      <Button variant="outline" className="rounded-lg border-[var(--border)] px-2.5 py-1.5 text-[10px] text-slate-400 hover:border-[var(--accent-line)] hover:text-[var(--accent)]">Export</Button>
+      <Button variant="secondary">Export</Button>
     </Dropdown.Trigger>
     <Dropdown.Popover className="z-50 min-w-48 rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] p-1 shadow-xl">
       <Dropdown.Menu aria-label="Export conversation" className="outline-none">

@@ -37,7 +37,7 @@ export function Login() {
           <label className="text-[10px] font-semibold text-slate-300" htmlFor="workspace-password">Password</label>
           <Input id="workspace-password" aria-label="Password" className="h-11 w-full rounded-lg border border-[var(--field-border)] bg-[rgba(7,11,19,.5)] px-3 text-sm text-[var(--text-strong)] outline-none focus:border-[var(--accent-line)] focus:ring-2 focus:ring-[var(--accent-soft)]" type="password" autoComplete="current-password" autoFocus required value={password} onChange={(event) => setPassword(event.target.value)} />
           {error && <div className="text-[10px] text-rose-300" role="alert">{error}</div>}
-          <Button type="submit" variant="primary" className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] text-[11px] font-bold text-[var(--on-accent)]" isDisabled={submitting || password.length === 0}>
+          <Button type="submit" variant="primary" className="mt-1 w-full" isDisabled={submitting || password.length === 0}>
             {submitting ? "Signing in…" : <>Continue <ArrowRight size={15} /></>}
           </Button>
         </form>

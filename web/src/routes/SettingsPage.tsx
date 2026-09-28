@@ -3,7 +3,7 @@ import { Button, Input, TextArea } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Check, CreditCard, FileText, KeyRound, LogOut, Save, Settings2, ShieldCheck, Star } from "lucide-react";
 import { ApiError } from "../api/client";
-import { fetchModels, fetchSessions, fetchSettings, fetchUsage, revokeAllSessions, revokeSession, updateSettings } from "../api/settings";
+import { fetchModels, fetchSessions, fetchSettings, fetchUsage, revokeAllSessions, revokeSession, updateSettingsAndRefetchFavorites } from "../api/settings";
 import { ModelPicker } from "../components/ModelPicker";
 import { useOnlineStatus } from "../api/useOnlineStatus";
 import { SelectField } from "../components/SelectField";
@@ -27,9 +27,9 @@ export function SettingsPage() {
   }, [settingsQuery.data]);
 
   const save = useMutation({
-    mutationFn: (patch: Parameters<typeof updateSettings>[0]) => {
+    mutationFn: (patch: Parameters<typeof updateSettingsAndRefetchFavorites>[0]) => {
       if (!navigator.onLine) throw new Error("You’re offline. Reconnect to change settings.");
-      return updateSettings(patch);
+      return updateSettingsAndRefetchFavorites(patch);
     },
     onSuccess: (settings, patch) => {
       queryClient.setQueryData(["settings"], settings);
@@ -37,7 +37,9 @@ export function SettingsPage() {
       setSaved(patch.openrouter_api_key !== undefined ? "API key updated" : patch.custom_instructions !== undefined ? "Instructions saved" : "Settings saved");
       setApiKey("");
     },
-    onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not save settings."),
+    onError: (cause) => {
+      setError(cause instanceof ApiError ? cause.message : "Could not save settings.");
+    },
   });
   const logoutAfterRevocation = () => {
     const clearingCache = clearPersistedQueryCache().catch(() => undefined);
@@ -90,10 +92,10 @@ export function SettingsPage() {
             <div className="settings-key-status"><span className={settings?.openrouter_api_key.set ? "status-led is-good" : "status-led"} /><span>{settings?.openrouter_api_key.set ? settings.openrouter_api_key.readable ? "Key connected" : "Key needs to be entered again" : "No key saved yet"}</span>{settings?.openrouter_api_key.hint && <code>{settings.openrouter_api_key.hint}</code>}</div>
             <form className="settings-key-form" onSubmit={(event) => { event.preventDefault(); setSaved(undefined); setError(undefined); save.mutate({ openrouter_api_key: apiKey.trim() }); }}>
               <label htmlFor="settings-openrouter-key">{settings?.openrouter_api_key.set ? "Replace API key" : "API key"}</label>
-              <div className="settings-key-row"><Input id="settings-openrouter-key" className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--field-border)] bg-[rgba(7,11,19,.46)] px-2.5 font-mono text-xs text-[var(--text-strong)] outline-none focus:border-[var(--accent-line)] focus:ring-2 focus:ring-[var(--accent-soft)]" type="password" autoComplete="off" placeholder="sk-or-v1-…" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /><Button variant="outline" className="min-h-9 rounded-lg border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 text-[9px] text-[var(--accent)] max-[720px]:w-full" isDisabled={!apiKey.trim() || save.isPending}>{save.isPending ? "Validating…" : "Validate and save"}</Button></div>
+              <div className="settings-key-row"><Input id="settings-openrouter-key" className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--field-border)] bg-[rgba(7,11,19,.46)] px-2.5 font-mono text-xs text-[var(--text-strong)] outline-none focus:border-[var(--accent-line)] focus:ring-2 focus:ring-[var(--accent-soft)]" type="password" autoComplete="off" placeholder="sk-or-v1-…" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /><Button variant="primary" className="max-[720px]:w-full" isDisabled={!apiKey.trim() || save.isPending}>{save.isPending ? "Validating…" : "Validate and save"}</Button></div>
             </form>
             <p className="settings-private-note"><ShieldCheck size={13} /> Encrypted at rest. The full key is never shown after saving.</p>
-            {settings?.openrouter_api_key.set && <Button variant="danger-soft" className="mt-2 px-0 text-xs text-[var(--danger)]" onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ openrouter_api_key: null }); }}>Remove saved key</Button>}
+            {settings?.openrouter_api_key.set && <Button variant="danger" className="mt-2" onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ openrouter_api_key: null }); }}>Remove saved key</Button>}
           </div>
         </section>
 
@@ -101,13 +103,13 @@ export function SettingsPage() {
           <div className="settings-section-heading"><div className="settings-section-icon"><Star size={16} /></div><div><h2 id="models-heading">Models</h2><p>Choose defaults and keep favorite models close.</p></div></div>
           {!settings?.openrouter_api_key.set ? <div className="settings-card settings-empty-note">Add an OpenRouter key to browse and set models.</div> : modelQuery.isLoading ? <div className="settings-card settings-empty-note">Loading available models…</div> : modelQuery.isError ? <div className="settings-card settings-error" role="alert">{modelQuery.error.message}</div> : <div className="settings-card settings-models-card">
             <div className="settings-model-fields">
-              <label><span>Default model</span><ModelPicker models={models} value={settings.default_model} favorites={favoriteModels} onChange={(default_model) => { setSaved(undefined); save.mutate({ default_model }); }} onToggleFavorite={(id) => changeFavorites(favoriteModels.includes(id) ? favoriteModels.filter((item) => item !== id) : [...favoriteModels, id])} /></label>
-              <label><span>Title model <small>Optional. Uses the conversation model when empty.</small></span><div className="settings-title-model"><ModelPicker className="min-w-0 flex-1" models={models} value={settings.title_model} favorites={favoriteModels} onChange={(title_model) => { setSaved(undefined); save.mutate({ title_model }); }} placeholder="Use conversation model" /><Button variant="ghost" className="px-2 text-[10px] text-slate-400" onPress={() => { setSaved(undefined); save.mutate({ title_model: null }); }}>Clear</Button></div></label>
+              <label><span>Default model</span><ModelPicker models={models} value={settings.default_model} favorites={favoriteModels} isDisabled={save.isPending} onChange={(default_model) => { setSaved(undefined); save.mutate({ default_model }); }} onToggleFavorite={(id) => changeFavorites(favoriteModels.includes(id) ? favoriteModels.filter((item) => item !== id) : [...favoriteModels, id])} /></label>
+              <label><span>Title model <small>Optional. Uses the conversation model when empty.</small></span><div className="settings-title-model"><ModelPicker className="min-w-0 flex-1" models={models} value={settings.title_model} favorites={favoriteModels} isDisabled={save.isPending} onChange={(title_model) => { setSaved(undefined); save.mutate({ title_model }); }} placeholder="Use conversation model" /><Button variant="secondary" isDisabled={save.isPending} onPress={() => { setSaved(undefined); save.mutate({ title_model: null }); }}>Clear</Button></div></label>
             </div>
             <div className="favorite-list-heading">FAVORITES <span>Shown first in the model picker</span></div>
             {favoriteModels.length === 0 ? <div className="favorite-empty">Star a model in a picker to add it here.</div> : <ul className="favorite-list">{favoriteModels.map((id, index) => {
               const item = models.find((model) => model.id === id);
-              return <li key={id}><Star size={13} fill="currentColor" /><span>{item?.name ?? id}<small>{id}</small></span><Button isIconOnly variant="ghost" className="h-7 w-7 text-slate-400" aria-label={`Move ${id} up`} isDisabled={index === 0} onPress={() => moveFavorite(index, -1)}><ArrowUp size={13} /></Button><Button isIconOnly variant="ghost" className="h-7 w-7 text-slate-400" aria-label={`Move ${id} down`} isDisabled={index === favoriteModels.length - 1} onPress={() => moveFavorite(index, 1)}><ArrowDown size={13} /></Button><Button variant="danger-soft" className="px-2 text-[10px] text-rose-300" onPress={() => changeFavorites(favoriteModels.filter((fav) => fav !== id))}>Remove</Button></li>;
+              return <li key={id}><Star size={13} fill="currentColor" /><span>{item?.name ?? id}<small>{id}</small></span><Button isIconOnly variant="ghost" className="h-7 w-7 text-slate-400" aria-label={`Move ${id} up`} isDisabled={index === 0} onPress={() => moveFavorite(index, -1)}><ArrowUp size={13} /></Button><Button isIconOnly variant="ghost" className="h-7 w-7 text-slate-400" aria-label={`Move ${id} down`} isDisabled={index === favoriteModels.length - 1} onPress={() => moveFavorite(index, 1)}><ArrowDown size={13} /></Button><Button variant="danger" onPress={() => changeFavorites(favoriteModels.filter((fav) => fav !== id))}>Remove</Button></li>;
             })}</ul>}
           </div>}
         </section>
@@ -117,7 +119,7 @@ export function SettingsPage() {
           <div className="settings-card instructions-card">
             <label htmlFor="custom-instructions">Instructions</label>
             <TextArea id="custom-instructions" className="min-h-28 w-full resize-y rounded-lg border border-[var(--field-border)] bg-[rgba(7,11,19,.4)] px-2.5 py-2 text-xs leading-7 text-[var(--text)] outline-none placeholder:text-slate-500 focus:border-[var(--accent-line)] focus:ring-2 focus:ring-[var(--accent-soft)]" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="For example: be concise, ask before making assumptions, and use metric units." rows={5} />
-            <div className="instructions-footer"><span>Sent as a private system instruction with each request.</span><Button variant="outline" className="min-h-9 rounded-lg border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 text-[9px] text-[var(--accent)] max-[720px]:self-stretch" isDisabled={instructions === settings?.custom_instructions || save.isPending} onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ custom_instructions: instructions }); }}>{save.isPending ? "Saving…" : "Save instructions"}</Button></div>
+            <div className="instructions-footer"><span>Sent as a private system instruction with each request.</span><Button variant="primary" className="max-[720px]:self-stretch" isDisabled={instructions === settings?.custom_instructions || save.isPending} onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ custom_instructions: instructions }); }}>{save.isPending ? "Saving…" : "Save instructions"}</Button></div>
           </div>
         </section>
 
@@ -133,7 +135,7 @@ export function SettingsPage() {
                 <LimitInput label="Files per message" value={uploadLimits.files_per_message} scale={1} max={20} onChange={(n) => setUploadDraft({ ...uploadLimits, files_per_message: n })} />
                 <LimitInput label="Total prompt · MB" value={uploadLimits.total_prompt_bytes} scale={1024 * 1024} max={200} onChange={(n) => setUploadDraft({ ...uploadLimits, total_prompt_bytes: n })} />
               </div>
-              <div className="settings-action-footer"><small>Server ceilings: images 40 MB, PDFs 100 MB, text 5 MB, 20 files, total 200 MB.</small><Button variant="outline" className="min-h-9 rounded-lg border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 text-[9px] text-[var(--accent)]" isDisabled={!uploadDraft || save.isPending} onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ upload_limits: uploadDraft }, { onSuccess: () => setUploadDraft(undefined) }); }}>{save.isPending ? "Saving…" : "Save upload limits"}</Button></div>
+              <div className="settings-action-footer"><small>Server ceilings: images 40 MB, PDFs 100 MB, text 5 MB, 20 files, total 200 MB.</small><Button variant="primary" isDisabled={!uploadDraft || save.isPending} onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ upload_limits: uploadDraft }, { onSuccess: () => setUploadDraft(undefined) }); }}>{save.isPending ? "Saving…" : "Save upload limits"}</Button></div>
             </>}
           </div>
         </section>
@@ -151,8 +153,8 @@ export function SettingsPage() {
         <section className="settings-section" aria-labelledby="sessions-heading">
           <div className="settings-section-heading"><div className="settings-section-icon"><LogOut size={16} /></div><div><h2 id="sessions-heading">Active sessions</h2><p>Devices currently signed in to your workspace.</p></div></div>
           {sessionsQuery.isLoading ? <div className="settings-card settings-empty-note">Loading sessions…</div> : sessionsQuery.isError ? <div className="settings-card settings-error" role="alert">{sessionsQuery.error.message}</div> : <div className="settings-card settings-sessions-card">
-            <div className="sessions-toolbar"><span>{sessionsQuery.data?.length ?? 0} active {(sessionsQuery.data?.length ?? 0) === 1 ? "session" : "sessions"}</span><Button variant="danger-soft" className="rounded-md px-2 py-1.5 text-[10px] text-rose-300" isDisabled={!sessionsQuery.data?.length || revokeEvery.isPending} onPress={() => revokeEvery.mutate()}>{revokeEvery.isPending ? "Logging out…" : "Log out all sessions"}</Button></div>
-            {!sessionsQuery.data?.length ? <p className="settings-empty-note">No active sessions.</p> : <ul className="settings-session-list">{sessionsQuery.data.map((session) => <li key={session.id}><span className="session-device">{session.user_agent || "Unknown device"}{session.current && <b>THIS DEVICE</b>}<small>{session.ip || "Unknown address"} · Signed in {dateTime(session.created_at)} · Last active {dateTime(session.last_seen_at)}</small></span><Button variant="danger-soft" className="rounded-md px-2 py-1.5 text-[10px] text-rose-300" isDisabled={revokeOne.isPending} onPress={() => revokeOne.mutate(session.id)}>{session.current ? "Log out" : "Revoke"}</Button></li>)}</ul>}
+            <div className="sessions-toolbar"><span>{sessionsQuery.data?.length ?? 0} active {(sessionsQuery.data?.length ?? 0) === 1 ? "session" : "sessions"}</span><Button variant="danger" isDisabled={!sessionsQuery.data?.length || revokeEvery.isPending} onPress={() => revokeEvery.mutate()}>{revokeEvery.isPending ? "Logging out…" : "Log out all sessions"}</Button></div>
+            {!sessionsQuery.data?.length ? <p className="settings-empty-note">No active sessions.</p> : <ul className="settings-session-list">{sessionsQuery.data.map((session) => <li key={session.id}><span className="session-device">{session.user_agent || "Unknown device"}{session.current && <b>THIS DEVICE</b>}<small>{session.ip || "Unknown address"} · Signed in {dateTime(session.created_at)} · Last active {dateTime(session.last_seen_at)}</small></span><Button variant="danger" isDisabled={revokeOne.isPending} onPress={() => revokeOne.mutate(session.id)}>{session.current ? "Log out" : "Revoke"}</Button></li>)}</ul>}
           </div>}
         </section>
         </fieldset>

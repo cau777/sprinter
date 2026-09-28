@@ -625,7 +625,7 @@ impl Manager {
                 )
             });
         if let Err(error) = sqlx::query("UPDATE messages SET content = ?, status = 'complete', error = NULL, finish_reason = ?, prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, cost = ?, updated_at = ? WHERE id = ?")
-            .bind(content).bind(&finish_reason).bind(prompt).bind(completion).bind(reasoning).bind(cost).bind(now_ms()).bind(id).execute(&self.pool).await
+            .bind(&content).bind(&finish_reason).bind(prompt).bind(completion).bind(reasoning).bind(cost).bind(now_ms()).bind(id).execute(&self.pool).await
         {
             tracing::error!(message_id = %id, error = %error, "could not persist completed generation");
         }

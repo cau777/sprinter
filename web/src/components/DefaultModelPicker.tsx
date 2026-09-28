@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
-import { fetchModels, fetchSettings, updateSettings } from "../api/settings";
+import { fetchModels, fetchSettings, updateSettingsAndRefetchFavorites } from "../api/settings";
 const ModelPicker = lazy(() => import("./ModelPicker").then((module) => ({ default: module.ModelPicker })));
 
 export function DefaultModelPicker({ isDisabled = false }: { isDisabled?: boolean }) {
@@ -9,11 +9,11 @@ export function DefaultModelPicker({ isDisabled = false }: { isDisabled?: boolea
   const settings = useQuery({ queryKey: ["settings"], queryFn: fetchSettings });
   const models = useQuery({ queryKey: ["models"], queryFn: fetchModels });
   const save = useMutation({
-    mutationFn: (patch: Parameters<typeof updateSettings>[0]) => {
+    mutationFn: (patch: Parameters<typeof updateSettingsAndRefetchFavorites>[0]) => {
       if (!navigator.onLine) throw new Error("You’re offline. Reconnect to change settings.");
-      return updateSettings(patch);
+      return updateSettingsAndRefetchFavorites(patch);
     },
-    onSuccess: (next) => queryClient.setQueryData(["settings"], next),
+    onSuccess: (settings) => queryClient.setQueryData(["settings"], settings),
   });
 
   if (settings.isError || models.isError) return <span className="model-control-error" title="Could not load model settings"><AlertCircle size={12} /> Model unavailable</span>;

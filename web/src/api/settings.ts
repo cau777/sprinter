@@ -12,6 +12,12 @@ export const fetchModels = () => apiRequest<ModelsResponse>("/api/models");
 export const updateSettings = (patch: SettingsPatch) =>
   apiRequest<Settings>("/api/settings", { method: "PATCH", body: jsonBody(patch) });
 
+/** Save a settings patch and fetch the authoritative settings after favorite changes. */
+export async function updateSettingsAndRefetchFavorites(patch: SettingsPatch) {
+  const saved = await updateSettings(patch);
+  return patch.favorite_models === undefined ? saved : fetchSettings();
+}
+
 export const fetchUsage = () => {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   return apiRequest<UsageResponse>(`/api/usage?tz=${encodeURIComponent(tz)}`);

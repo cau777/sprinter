@@ -12,11 +12,13 @@ import { fetchModels, fetchSettings } from "../api/settings";
 import { ChatExportMenu } from "./ChatExportMenu";
 import { ModelPicker } from "./ModelPicker";
 import { SearchDialog } from "./SearchDialog";
+import { HelpDialog } from "./HelpDialog";
 import { useRegisterSW } from "virtual:pwa-register/react";
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const online = useOnlineStatus();
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
   const navigate = useNavigate();
@@ -59,23 +61,23 @@ export function AppShell() {
   }, [navigate]);
 
   return (
-    <main className="flex min-h-dvh gap-3 p-3 max-[720px]:gap-0 max-[720px]:p-0">
-      <aside className="flex min-h-[calc(100dvh-24px)] w-[250px] shrink-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--panel)] px-[13px] pt-5 pb-3 backdrop-blur-[18px] max-[720px]:hidden">
-        <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => setSearchOpen(true)} />
+    <main className="flex h-dvh gap-3 overflow-hidden p-3 max-[720px]:gap-0 max-[720px]:p-0">
+      <aside className="flex h-[calc(100dvh-24px)] min-h-0 w-[250px] shrink-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--panel)] px-[13px] pt-5 pb-3 backdrop-blur-[18px] max-[720px]:hidden">
+        <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => setSearchOpen(true)} onHelp={() => setHelpOpen(true)} />
       </aside>
 
       {drawerOpen && <div className="fixed inset-0 z-20 bg-[rgba(1,4,10,.65)] backdrop-blur-[3px]" onClick={() => setDrawerOpen(false)}>
         <aside className="absolute inset-y-2 left-2 z-[21] flex w-[min(285px,calc(100vw-40px))] min-h-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--panel)] px-[13px] pt-5 pb-3 shadow-[20px_0_70px_rgba(0,0,0,.32)] backdrop-blur-[18px] animate-[drawer-in_.17s_ease-out]" onClick={(event) => event.stopPropagation()}>
           <Button isIconOnly className="absolute right-3 top-4 z-10 hidden h-7 w-7 text-slate-400 max-[720px]:flex" variant="ghost" aria-label="Close navigation" onPress={() => setDrawerOpen(false)}><X size={17} /></Button>
-          <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => { setDrawerOpen(false); setSearchOpen(true); }} />
+          <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => { setDrawerOpen(false); setSearchOpen(true); }} onHelp={() => { setDrawerOpen(false); setHelpOpen(true); }} />
         </aside>
       </div>}
 
-      <section className="flex min-h-[calc(100dvh-24px)] min-w-0 flex-1 flex-col max-[720px]:min-h-dvh">
+      <section className="flex h-[calc(100dvh-24px)] min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-[720px]:h-dvh">
         {!online && <div className="flex items-center justify-center gap-3 border-b border-amber-300/20 bg-amber-300/10 px-3.5 py-2 text-center text-[11px] text-amber-200" role="status">You’re offline. Saved conversations are available to read.</div>}
         {needRefresh && !generationOpen && <div className="flex items-center justify-center gap-3 border-b border-cyan-300/20 bg-cyan-300/10 px-3.5 py-2 text-center text-[11px] text-cyan-100" role="status">
           <span>A Sprinter update is ready.</span>
-          <Button variant="ghost" className="rounded-md border border-[var(--accent-line)] bg-[var(--accent-soft)] px-2 py-1 text-[10px] text-[var(--accent)]" onPress={() => void updateServiceWorker(true)}>Reload to update</Button>
+          <Button variant="secondary" onPress={() => void updateServiceWorker(true)}>Reload to update</Button>
         </div>}
         <header className="flex h-[55px] shrink-0 items-center justify-between border-b border-[rgba(120,160,220,.08)] px-[23px] max-[720px]:h-[49px] max-[720px]:px-[15px]">
           <div className="flex min-w-0 flex-1 items-center gap-[11px]">
@@ -83,7 +85,7 @@ export function AppShell() {
             <span className="font-mono text-[9px] tracking-[.1em] text-slate-500 max-[720px]:hidden">WORKSPACE</span><span className="text-slate-700 max-[720px]:hidden">/</span><span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-slate-300">{pageName}</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] text-slate-500 max-[720px]:gap-1.5 max-[720px]:text-[9px]">
-            {activeChatId && modelsQuery.data && settingsQuery.data && <div className="w-[190px] min-w-0 max-[720px]:w-[min(145px,37vw)]"><ModelPicker compact models={modelsQuery.data.items} value={currentChatQuery.data?.model ?? currentChat?.model ?? null} favorites={settingsQuery.data.favorite_models} isDisabled={!online || modelChange.isPending} onChange={(model) => modelChange.mutate({ chatId: activeChatId, model })} placeholder="Choose model" /></div>}
+            {activeChatId && modelsQuery.data && settingsQuery.data && <div className="w-[260px] min-w-0 max-[720px]:w-[min(190px,48vw)]"><ModelPicker compact models={modelsQuery.data.items} value={currentChatQuery.data?.model ?? currentChat?.model ?? null} favorites={settingsQuery.data.favorite_models} isDisabled={!online || modelChange.isPending} onChange={(model) => modelChange.mutate({ chatId: activeChatId, model })} placeholder="Choose model" /></div>}
             {activeChatId && <ChatExportMenu chatId={activeChatId} />}
             <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(74,222,154,.35)] max-[720px]:hidden" /> <span className="max-[720px]:hidden">Local and private</span>
           </div>
@@ -91,11 +93,12 @@ export function AppShell() {
         <Outlet />
       </section>
       <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
     </main>
   );
 }
 
-function SidebarContents({ online, onNavigate, onSearch }: { online: boolean; onNavigate: () => void; onSearch: () => void }) {
+function SidebarContents({ online, onNavigate, onSearch, onHelp }: { online: boolean; onNavigate: () => void; onSearch: () => void; onHelp: () => void }) {
   const queryClient = useQueryClient();
   async function logout() {
     await apiRequest("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);
@@ -115,19 +118,19 @@ function SidebarContents({ online, onNavigate, onSearch }: { online: boolean; on
       <Link to="/" className="flex h-10 w-full items-center gap-2.5 rounded-xl border border-[var(--accent-line)] bg-[rgba(61,232,255,.025)] px-3 text-xs text-[var(--accent)] no-underline" onClick={onNavigate}>
         <MessageSquarePlus size={16} /><span>New chat</span><kbd>⌘ ⇧ O</kbd>
       </Link>
-      <Button className="h-10 w-full justify-start gap-2.5 rounded-xl px-3 text-xs text-slate-400" variant="ghost" onPress={onSearch}><Search size={16} /><span>Search chats</span><kbd className="ml-auto rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-slate-500">⌘ K</kbd></Button>
+      <Button className="sidebar-nav-item" variant="ghost" onPress={onSearch}><Search size={16} /><span>Search chats</span><kbd className="ml-auto rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-slate-500">⌘ K</kbd></Button>
     </div>
 
-    <div className="px-2 pt-[30px] pb-3">
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-[30px] pb-3">
       <div className="mb-3 font-mono text-[10px] tracking-[.09em] text-slate-600">YOUR SPACE</div>
       <ConversationList online={online} onNavigate={onNavigate} />
     </div>
 
     <div className="mt-auto grid gap-1">
-      <Link to="/settings" className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-xs text-slate-400 no-underline hover:bg-white/5 hover:text-slate-100" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
-      <Button variant="ghost" className="justify-start gap-2.5 rounded-lg px-2 py-2 text-left text-xs text-slate-400 hover:bg-white/5 hover:text-slate-100"><CircleHelp size={16} /><span>Help & shortcuts</span></Button>
+      <Link to="/settings" className="sidebar-nav-item" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
+      <Button variant="ghost" className="sidebar-nav-item" onPress={onHelp}><CircleHelp size={16} /><span>Help & shortcuts</span></Button>
       <div className="mt-[9px] flex items-center gap-2.5 border-t border-[var(--border)] px-[5px] pt-[15px] pb-1"><div className="grid size-[30px] place-items-center rounded-[10px] bg-[linear-gradient(145deg,#26354d,#152032)] font-display text-xs font-semibold text-slate-300">S</div><div><div className="text-[11px] font-semibold text-slate-200">Sprinter</div><div className="text-[10px] text-slate-500">Private workspace</div></div><Command className="ml-auto text-slate-500" size={15} /></div>
-      <Button variant="ghost" className="w-full justify-start gap-2.5 rounded-lg px-2 py-2 text-left text-xs text-slate-500 hover:bg-white/5 hover:text-slate-100" onPress={() => void logout()}><LogOut size={15} /><span>Log out</span></Button>
+      <Button variant="ghost" className="sidebar-nav-item" onPress={() => void logout()}><LogOut size={15} /><span>Log out</span></Button>
     </div>
   </>;
 }

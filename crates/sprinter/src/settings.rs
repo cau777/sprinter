@@ -480,10 +480,10 @@ async fn patch_settings_inner(
             .and_then(Value::as_str);
         tracing::info!(
             keys = ?changed,
-            default_model = ?values.get("default_model").and_then(Value::as_str),
-            title_model = ?values.get("title_model").and_then(Value::as_str),
+            default_model = ?values.get("default_model").and_then(serde_json::Value::as_str),
+            title_model = ?values.get("title_model").and_then(serde_json::Value::as_str),
             favorite_models = ?values.get("favorite_models"),
-            pdf_engine = ?values.get("pdf_engine").and_then(Value::as_str),
+            pdf_engine = ?values.get("pdf_engine").and_then(serde_json::Value::as_str),
             upload_limits = ?values.get("upload_limits"),
             key_set = values.get("openrouter_api_key").map(|value| {
                 value.as_str().is_some_and(|key| !key.trim().is_empty())

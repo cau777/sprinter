@@ -142,7 +142,7 @@ export function AssistantStoreSpike() {
             <ComposerPrimitive.Input aria-label="Message the fake assistant" placeholder="Try a new message…" submitMode="ctrlEnter" />
             <div className="spike-composer-attachments"><ComposerPrimitive.Attachments>{({ attachment: file }) => <span key={file.id}><Paperclip size={11} /> {file.name}</span>}</ComposerPrimitive.Attachments></div>
             <ComposerPrimitive.AddAttachment className="spike-attach-control" aria-label="Add file"><Paperclip size={15} /></ComposerPrimitive.AddAttachment>
-            {running ? <ComposerPrimitive.Cancel><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send>Send demo</ComposerPrimitive.Send>}
+            {running ? <ComposerPrimitive.Cancel className="composer-action-danger"><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary spike-send-demo">Send demo</ComposerPrimitive.Send>}
           </ComposerPrimitive.Root>
           <div className="spike-state"><span>external messages: {tree.length} · visible path: {visiblePath.length}</span><span>source of truth: fake local tree</span></div>
         </ThreadPrimitive.Root>
