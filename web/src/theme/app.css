@@ -108,6 +108,9 @@ button { color: inherit; }
 .breadcrumb-current { color: #cbd4e2; font-size: 12px; }
 .topbar-right { display: flex; align-items: center; gap: 8px; color: #758198; font-size: 10px; }
 .connection-dot { width: 6px; height: 6px; background: var(--success); border-radius: 50%; box-shadow: 0 0 8px rgba(74,222,154,.35); }
+.pwa-status-banner { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 7px 14px; background: rgba(255,200,87,.1); border-bottom: 1px solid rgba(255,200,87,.18); color: #f1d58c; font-size: 11px; text-align: center; }
+.pwa-update-banner { background: rgba(61,232,255,.08); border-bottom-color: rgba(61,232,255,.16); color: #b5edf4; }
+.pwa-status-banner button { border: 1px solid rgba(61,232,255,.3); border-radius: 6px; padding: 3px 8px; background: rgba(61,232,255,.08); color: var(--accent); font-size: 10px; cursor: pointer; }
 .conversation-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 18px 22px 21px; }
 .welcome-content { width: min(100%, 610px); text-align: center; transform: translateY(-11px); }
 .welcome-icon { display: grid; place-items: center; width: 52px; height: 52px; margin: 0 auto 21px; border-radius: 17px; border: 1px solid rgba(61,232,255,.18); color: var(--accent); background: linear-gradient(145deg,rgba(61,232,255,.11),rgba(61,232,255,.025)); box-shadow: 0 10px 42px rgba(61,232,255,.07); }

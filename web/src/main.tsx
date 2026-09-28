@@ -7,10 +7,12 @@ import "./theme/app.css";
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
 import { ClientErrorBoundary, installGlobalErrorHandlers } from "./clientErrors";
+import { queryPersister } from "./api/queryPersistence";
 
 installGlobalErrorHandlers();
 
@@ -21,9 +23,21 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ClientErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{
+          persister: queryPersister,
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+          buster: "sprinter-v1",
+          dehydrateOptions: {
+            shouldDehydrateQuery: (query) =>
+              query.state.status === "success" &&
+              (query.queryKey[0] === "chats" || query.queryKey[0] === "chat"),
+          },
+        }}
+      >
         <RouterProvider router={router} />
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </ClientErrorBoundary>
   </React.StrictMode>,
 );

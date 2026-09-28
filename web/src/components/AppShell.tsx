@@ -5,12 +5,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp, Command, LogOut, Menu, MessageSquarePlus, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { apiRequest } from "../api/client";
 import { deleteChat, fetchChats, updateChat } from "../api/chats";
+import { clearPersistedQueryCache } from "../api/queryPersistence";
 import { ChatExportMenu } from "./ChatExportMenu";
 import { SearchDialog } from "./SearchDialog";
+import { useRegisterSW } from "virtual:pwa-register/react";
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
   const navigate = useNavigate();
   const currentPath = useRouterState({ select: (state) => state.location.pathname });
   const chatList = useQuery({ queryKey: ["chats"], queryFn: fetchChats });
@@ -18,6 +22,9 @@ export function AppShell() {
   const pageName = currentPath === "/settings" ? "Settings" : currentPath === "/setup" ? "Workspace setup" : currentPath === "/spike/assistant-ui" ? "Runtime lab" : currentChat?.title || (currentChat ? "Conversation" : currentPath === "/" ? "New conversation" : "Conversation");
 
   useEffect(() => {
+    const updateOnline = () => setOnline(navigator.onLine);
+    window.addEventListener("online", updateOnline);
+    window.addEventListener("offline", updateOnline);
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       if (event.key.toLowerCase() === "k" && !event.shiftKey) {
@@ -29,7 +36,11 @@ export function AppShell() {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("online", updateOnline);
+      window.removeEventListener("offline", updateOnline);
+    };
   }, [navigate]);
 
   return (
@@ -46,6 +57,11 @@ export function AppShell() {
       </div>}
 
       <section className="main-panel">
+        {!online && <div className="pwa-status-banner" role="status">You’re offline. Saved conversations are available to read.</div>}
+        {needRefresh && <div className="pwa-status-banner pwa-update-banner" role="status">
+          <span>A Sprinter update is ready.</span>
+          <button type="button" onClick={() => void updateServiceWorker(true)}>Reload to update</button>
+        </div>}
         <header className="topbar">
           <div className="breadcrumb">
             <Button isIconOnly className="mobile-menu-button" variant="ghost" aria-label="Open navigation" onPress={() => setDrawerOpen(true)}><Menu size={17} /></Button>
@@ -61,8 +77,11 @@ export function AppShell() {
 }
 
 function SidebarContents({ onNavigate, onSearch }: { onNavigate: () => void; onSearch: () => void }) {
+  const queryClient = useQueryClient();
   async function logout() {
     await apiRequest("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);
+    queryClient.clear();
+    await clearPersistedQueryCache().catch(() => undefined);
     window.location.assign("/login");
   }
 
