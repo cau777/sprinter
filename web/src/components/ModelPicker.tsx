@@ -94,7 +94,7 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
               <Button isIconOnly variant="ghost" className="h-8 w-8 rounded-lg text-slate-400" aria-label="Close model picker" onPress={() => setIsOpen(false)}><X size={17} /></Button>
             </Modal.Header>
 
-            <Modal.Body className="flex min-h-0 flex-1 flex-col gap-3 px-5 py-4">
+            <Modal.Body className="flex min-h-0 flex-1 flex-col gap-3 p-0 pt-3">
               <label className="flex h-10 shrink-0 items-center gap-2.5 rounded-lg border border-[var(--accent-line)] bg-[rgba(4,9,17,.68)] px-3 text-[var(--accent)]">
                 <Search size={15} aria-hidden="true" />
                 <Input aria-label="Search models" className="min-w-0 flex-1 border-0 bg-transparent text-xs text-[var(--text)] outline-none placeholder:text-slate-500" placeholder="Search model names and IDs…" value={query} onChange={(event) => setQuery(event.target.value)} />
