@@ -9,7 +9,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, FileText, Image as ImageIcon, Paperclip, RotateCw, Sparkles, Square, X } from "lucide-react";
+import { ArrowUpRight, Copy, FileText, Image as ImageIcon, Paperclip, RotateCw, Sparkles, Square, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, switchBranch, updateChat, watchMessage } from "../api/chats";
 import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
@@ -43,7 +43,18 @@ function applyMessageEvent(queryClient: ReturnType<typeof useQueryClient>, chatI
       if (message.id !== messageId) return message;
       if (event.event === "snapshot") return { ...message, content: String(event.content ?? "") };
       if (event.event === "delta") return { ...message, content: message.content + String(event.content ?? "") };
-      if (event.event === "done") return { ...message, status: String(event.status ?? "complete") as ChatMessage["status"], finish_reason: (event.finish_reason as string | null) ?? null, cost: (event.cost as number | null) ?? message.cost };
+      if (event.event === "done") {
+        const usage = event.usage as { prompt_tokens?: number | null; completion_tokens?: number | null; reasoning_tokens?: number | null } | null | undefined;
+        return {
+          ...message,
+          status: String(event.status ?? "complete") as ChatMessage["status"],
+          finish_reason: (event.finish_reason as string | null) ?? null,
+          prompt_tokens: usage?.prompt_tokens ?? message.prompt_tokens,
+          completion_tokens: usage?.completion_tokens ?? message.completion_tokens,
+          reasoning_tokens: usage?.reasoning_tokens ?? message.reasoning_tokens,
+          cost: (event.cost as number | null) ?? message.cost,
+        };
+      }
       if (event.event === "error") return { ...message, status: "error", error: String(event.message ?? "Generation failed") };
       return message;
     }) };
@@ -67,6 +78,7 @@ export function ChatInterface({ chatId }: Props) {
   } });
   const [draftError, setDraftError] = useState<string>();
   const [retryModels, setRetryModels] = useState<Record<string, string>>({});
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [pdfEngine, setPdfEngine] = useState("");
   const [fileError, setFileError] = useState<string>();
@@ -125,6 +137,15 @@ export function ChatInterface({ chatId }: Props) {
   const beginEdit = (message: ChatMessage) => {
     setPendingUploads(message.attachments.map((attachment) => ({ key: attachment.upload_id, filename: attachment.filename, record: attachment, progress: 100, uploading: false, persisted: true })));
     setFileError(undefined);
+  };
+  const copyMessage = async (message: ChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedMessageId(message.id);
+      window.setTimeout(() => setCopiedMessageId((current) => current === message.id ? null : current), 1800);
+    } catch {
+      setCopiedMessageId(null);
+    }
   };
 
   const send = useMutation({
@@ -259,8 +280,12 @@ export function ChatInterface({ chatId }: Props) {
               {!user && item?.generationStatus === "error" && <div className="chat-message-error" role="alert">{item.error ?? "The response could not be completed."}</div>}
               {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="chat-message-state">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
               <div className="chat-message-tools">
-                {user && online && <ActionBarPrimitive.Root><ActionBarPrimitive.Edit onClick={() => original && beginEdit(original)}>Edit</ActionBarPrimitive.Edit></ActionBarPrimitive.Root>}
+                {user && original && <>
+                  {online && <ActionBarPrimitive.Root><ActionBarPrimitive.Edit onClick={() => beginEdit(original)}>Edit</ActionBarPrimitive.Edit></ActionBarPrimitive.Root>}
+                  <button type="button" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onClick={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</button>
+                </>}
                 {!user && item?.generationStatus !== "streaming" && <>
+                  {original && <button type="button" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onClick={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</button>}
                   <button type="button" onClick={() => retry.mutate({ messageId: message.id, model: retryModels[message.id] || undefined })} disabled={!online || retry.isPending}><RotateCw size={12} /> Retry</button>
                   <select aria-label={`Retry model for message ${message.id}`} value={retryModels[message.id] ?? ""} disabled={!online} onChange={(event) => setRetryModels((current) => ({ ...current, [message.id]: event.target.value }))}>
                     <option value="">Same model</option>
@@ -272,6 +297,7 @@ export function ChatInterface({ chatId }: Props) {
                   <span>{branchIndex + 1} / {siblings.length}</span>
                   <button type="button" aria-label={`Next branch for message ${message.id}`} disabled={!online || branchIndex >= siblings.length - 1 || switchMutation.isPending} onClick={() => switchMutation.mutate(siblings[branchIndex + 1].id)}>›</button>
                 </div>}
+                {!user && original && (original.prompt_tokens != null || original.completion_tokens != null || original.cost != null) && <span className="message-usage" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
               </div>
             </MessagePrimitive.Root>;
           }}</ThreadPrimitive.Messages>
@@ -320,6 +346,18 @@ function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function usageSummary(message: ChatMessage) {
+  const tokenCount = message.prompt_tokens != null || message.completion_tokens != null
+    ? new Intl.NumberFormat().format((message.prompt_tokens ?? 0) + (message.completion_tokens ?? 0))
+    : null;
+  const cost = message.cost == null ? null : `$${message.cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+  return [tokenCount == null ? null : `${tokenCount} tokens`, cost].filter(Boolean).join(" · ");
+}
+
+function usageLabel(message: ChatMessage) {
+  return `OpenRouter usage: ${usageSummary(message)}`;
 }
 
 function pastedImageName(file: File) {

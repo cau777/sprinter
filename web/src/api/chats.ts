@@ -22,7 +22,7 @@ export type ExistingChatResponse = Omit<SendMessageResponse, "user_message" | "a
 export type RetryResponse = Omit<RegenerateMessageResponse, "assistant_message"> & { assistant_message: ChatMessage };
 export type StreamEvent =
   | { event: "snapshot" | "delta"; content: string }
-  | { event: "done"; status: ChatMessage["status"]; finish_reason?: string | null; cost?: number | null }
+  | { event: "done"; status: ChatMessage["status"]; finish_reason?: string | null; usage?: { prompt_tokens?: number | null; completion_tokens?: number | null; reasoning_tokens?: number | null } | null; cost?: number | null }
   | { event: "error"; status?: "error"; message: string }
   | { event: "title"; chat_id: string; title: string };
 
