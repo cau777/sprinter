@@ -4,10 +4,13 @@ import { Button } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp, Command, LogOut, Menu, MessageSquarePlus, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { apiRequest } from "../api/client";
-import { deleteChat, fetchChats, updateChat } from "../api/chats";
+import { deleteChat, fetchChat, fetchChats, updateChat } from "../api/chats";
+import type { ChatDetail, ChatPage } from "../api/chats";
 import { clearPersistedQueryCache } from "../api/queryPersistence";
 import { useOnlineStatus } from "../api/useOnlineStatus";
+import { fetchModels, fetchSettings } from "../api/settings";
 import { ChatExportMenu } from "./ChatExportMenu";
+import { ModelPicker } from "./ModelPicker";
 import { SearchDialog } from "./SearchDialog";
 import { useRegisterSW } from "virtual:pwa-register/react";
 
@@ -17,10 +20,28 @@ export function AppShell() {
   const online = useOnlineStatus();
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const currentPath = useRouterState({ select: (state) => state.location.pathname });
   const chatList = useQuery({ queryKey: ["chats"], queryFn: fetchChats });
   const currentChat = chatList.data?.items.find((chat) => `/${chat.id}` === currentPath);
-  const pageName = currentPath === "/settings" ? "Settings" : currentPath === "/setup" ? "Workspace setup" : currentPath === "/spike/assistant-ui" ? "Runtime lab" : currentChat?.title || (currentChat ? "Conversation" : currentPath === "/" ? "New conversation" : "Conversation");
+  const routeChatId = currentPath === "/" || currentPath === "/settings" || currentPath === "/setup" || currentPath === "/spike/assistant-ui" ? undefined : currentPath.slice(1);
+  const activeChatId = currentChat?.id ?? routeChatId;
+  const currentChatQuery = useQuery({ queryKey: ["chat", activeChatId], queryFn: () => fetchChat(activeChatId!), enabled: Boolean(activeChatId) });
+  const modelsQuery = useQuery({ queryKey: ["models"], queryFn: fetchModels, enabled: Boolean(activeChatId) });
+  const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: fetchSettings, enabled: Boolean(activeChatId) });
+  const modelChange = useMutation({
+    mutationFn: ({ chatId, model }: { chatId: string; model: string }) => {
+      if (!navigator.onLine) throw new Error("You’re offline. Reconnect to change the model.");
+      return updateChat(chatId, { model });
+    },
+    onSuccess: (summary) => {
+      queryClient.setQueryData<ChatPage>(["chats"], (current) => current ? { ...current, items: current.items.map((chat) => chat.id === summary.id ? summary : chat) } : current);
+      queryClient.setQueryData<ChatDetail>(["chat", summary.id], (current) => current ? { ...current, model: summary.model } : current);
+      void queryClient.invalidateQueries({ queryKey: ["chat", summary.id] });
+    },
+  });
+  const generationOpen = currentChatQuery.data?.messages.some((message) => message.status === "streaming") ?? false;
+  const pageName = currentPath === "/settings" ? "Settings" : currentPath === "/setup" ? "Workspace setup" : currentPath === "/spike/assistant-ui" ? "Runtime lab" : currentChatQuery.data?.title || currentChat?.title || (activeChatId ? "Conversation" : currentPath === "/" ? "New conversation" : "Conversation");
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -52,7 +73,7 @@ export function AppShell() {
 
       <section className="main-panel">
         {!online && <div className="pwa-status-banner" role="status">You’re offline. Saved conversations are available to read.</div>}
-        {needRefresh && <div className="pwa-status-banner pwa-update-banner" role="status">
+        {needRefresh && !generationOpen && <div className="pwa-status-banner pwa-update-banner" role="status">
           <span>A Sprinter update is ready.</span>
           <button type="button" onClick={() => void updateServiceWorker(true)}>Reload to update</button>
         </div>}
@@ -61,7 +82,11 @@ export function AppShell() {
             <Button isIconOnly className="mobile-menu-button" variant="ghost" aria-label="Open navigation" onPress={() => setDrawerOpen(true)}><Menu size={17} /></Button>
             <span className="topbar-kicker">WORKSPACE</span><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">{pageName}</span>
           </div>
-          <div className="topbar-right">{currentChat && <ChatExportMenu chatId={currentChat.id} />}<span className="connection-dot" /> <span>Local and private</span></div>
+          <div className="topbar-right">
+            {activeChatId && modelsQuery.data && settingsQuery.data && <div className="topbar-model-picker"><ModelPicker models={modelsQuery.data.items} value={currentChatQuery.data?.model ?? currentChat?.model ?? null} favorites={settingsQuery.data.favorite_models} isDisabled={!online || modelChange.isPending} onChange={(model) => modelChange.mutate({ chatId: activeChatId, model })} placeholder="Choose model" /></div>}
+            {activeChatId && <ChatExportMenu chatId={activeChatId} />}
+            <span className="connection-dot" /> <span>Local and private</span>
+          </div>
         </header>
         <Outlet />
       </section>

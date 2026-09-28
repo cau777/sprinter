@@ -11,12 +11,11 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Copy, FileText, Image as ImageIcon, Paperclip, RotateCw, Sparkles, Square, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
-import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, switchBranch, updateChat, watchMessage } from "../api/chats";
+import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, switchBranch, watchMessage } from "../api/chats";
 import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings } from "../api/settings";
 import { DefaultModelPicker } from "../components/DefaultModelPicker";
-import { ModelPicker } from "../components/ModelPicker";
 import { siblingsFor, visiblePath } from "./branch";
 import { MarkdownText } from "./MarkdownText";
 import { deleteUpload, uploadFile, type UploadRecord } from "../api/uploads";
@@ -69,13 +68,6 @@ export function ChatInterface({ chatId, messageId }: Props) {
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: fetchSettings });
   const modelQuery = useQuery({ queryKey: ["models"], queryFn: fetchModels });
   const [coarsePointer, setCoarsePointer] = useState(false);
-  const chatModelMutation = useMutation({ mutationFn: (model: string) => {
-    if (!navigator.onLine) throw new Error("You’re offline. Reconnect to change the model.");
-    return updateChat(chatId!, { model });
-  }, onSuccess: (summary) => {
-    queryClient.setQueryData<ChatDetail>(["chat", chatId], (current) => current ? { ...current, model: summary.model } : current);
-    void queryClient.invalidateQueries({ queryKey: ["chats"] });
-  } });
   const [draftError, setDraftError] = useState<string>();
   const [retryModels, setRetryModels] = useState<Record<string, string>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -307,7 +299,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
             const branchIndex = siblings.findIndex((candidate) => candidate.id === message.id);
             const user = message.role === "user";
             const editing = user && message.composer.isEditing;
-            return <MessagePrimitive.Root key={message.id} className="chat-message" data-message-id={message.id} data-search-target={searchHighlight === message.id ? "true" : undefined} tabIndex={searchHighlight === message.id ? -1 : undefined} data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
+            return <MessagePrimitive.Root key={message.id} className="chat-message" data-message-id={message.id} data-search-target={searchHighlight === message.id ? "true" : undefined} data-message-status={item?.generationStatus ?? "complete"} tabIndex={-1} data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
               <div className="chat-message-role">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
               {editing ? <ComposerPrimitive.Root className="composer-card chat-composer chat-edit-composer">
                 <ComposerPrimitive.Input aria-label="Message" placeholder="Edit message…" rows={2} disabled={!online} />
@@ -353,7 +345,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
           <ComposerPrimitive.Input aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
           <UploadChips items={pendingUploads} onRemove={removeUpload} />
           {(pendingUploads.some((item) => item.record?.kind === "pdf") || visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "pdf"))) && <label className="pdf-engine-control">PDF engine <select aria-label="PDF engine for this send" value={pdfEngine} disabled={!online} onChange={(event) => setPdfEngine(event.target.value)}><option value="">Settings default ({settingsQuery.data?.pdf_engine ?? "cloudflare-ai"})</option><option value="cloudflare-ai">Cloudflare AI</option><option value="mistral-ocr">Mistral OCR</option><option value="native">Native</option></select></label>}
-          <div className="composer-toolbar"><div className="composer-left"><button type="button" className="attach-button" onClick={() => fileInput.current?.click()} aria-label="Attach files" disabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</button>{chatId && detail ? <ModelPicker models={modelQuery.data?.items ?? []} value={detail.model} favorites={settingsQuery.data?.favorite_models ?? []} isDisabled={!online || modelQuery.isLoading || chatModelMutation.isPending} onChange={(model) => chatModelMutation.mutate(model)} placeholder="Choose model" /> : <DefaultModelPicker isDisabled={!online} />}</div><div className="composer-right"><span className="enter-hint">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="stop-button" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="send-button" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading)}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
+          <div className="composer-toolbar"><div className="composer-left"><button type="button" className="attach-button" onClick={() => fileInput.current?.click()} aria-label="Attach files" disabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</button>{!chatId && <DefaultModelPicker isDisabled={!online} />}</div><div className="composer-right"><span className="enter-hint">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="stop-button" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="send-button" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading)}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
         </ComposerPrimitive.Root>
       </AssistantRuntimeProvider>
       <p className="composer-caption">Sprinter can make mistakes. Check important information.</p>
