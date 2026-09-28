@@ -183,6 +183,34 @@ button { color: inherit; }
 .chat-loading { flex: 1; display: grid; place-items: center; color: #8390a6; font-size: 11px; }
 @keyframes stream-glow { 0%,100% { box-shadow: -8px 0 24px -20px rgba(61,232,255,.45); } 50% { box-shadow: -8px 0 30px -15px rgba(61,232,255,.75); } }
 
+/* Chat search and export controls */
+.chat-search-dialog { width: min(620px, calc(100vw - 28px)); max-width: none; max-height: min(80dvh, 680px); padding: 0; border: 1px solid rgba(120,160,220,.2); border-radius: 15px; color: var(--text); background: #0d1421; box-shadow: 0 30px 100px rgba(0,0,0,.62); }
+.chat-search-dialog::backdrop { background: rgba(1,4,10,.72); backdrop-filter: blur(4px); }
+.chat-search-panel { display: grid; grid-template-rows: auto auto minmax(100px, 1fr) auto; max-height: min(80dvh, 680px); padding: 18px; }
+.chat-search-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; }
+.chat-search-heading .eyebrow { margin-bottom: 4px; }
+.chat-search-heading h2 { margin: 0; color: #eef3fa; font: 500 18px "Sora",sans-serif; }
+.chat-search-close { display: grid; place-items: center; width: 31px; height: 31px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: #95a1b5; cursor: pointer; }
+.chat-search-input-wrap { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 11px; border: 1px solid rgba(61,232,255,.28); border-radius: 9px; background: rgba(4,9,17,.68); color: var(--accent); }
+.chat-search-input-wrap input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font: 12px "Manrope",sans-serif; }
+.chat-search-input-wrap input::placeholder { color: #748198; }
+.chat-search-input-wrap kbd,.chat-search-footer kbd { padding: 2px 5px; border: 1px solid rgba(120,160,220,.16); border-radius: 4px; color: #75839a; font: 8px "JetBrains Mono",monospace; }
+.chat-search-results { min-height: 100px; overflow-y: auto; padding: 10px 0; }
+.chat-search-hint,.chat-search-error { padding: 18px 8px; color: #7e8ba1; text-align: center; font-size: 10px; }
+.chat-search-error { color: #ff9aab; }
+.chat-search-result { display: grid; width: 100%; gap: 4px; padding: 10px 9px; border: 0; border-bottom: 1px solid rgba(120,160,220,.08); border-radius: 7px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.chat-search-result:hover,.chat-search-result:focus-visible { outline: 0; background: rgba(61,232,255,.07); }
+.chat-search-result-title { color: #dce5f2; font-size: 11px; font-weight: 600; }
+.chat-search-result-snippet { overflow: hidden; color: #8996ab; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-search-footer { display: flex; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: #69768c; font-size: 8px; }
+.chat-export-menu { position: relative; color: #8794a9; font-size: 10px; }
+.chat-export-menu summary { padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; list-style: none; cursor: pointer; }
+.chat-export-menu summary::-webkit-details-marker { display: none; }
+.chat-export-menu summary:hover { color: var(--accent); border-color: var(--accent-line); }
+.chat-export-options { position: absolute; z-index: 12; top: calc(100% + 6px); right: 0; display: grid; min-width: 175px; padding: 5px; border: 1px solid rgba(120,160,220,.17); border-radius: 8px; background: #111827; box-shadow: 0 12px 35px rgba(0,0,0,.4); }
+.chat-export-options a { padding: 8px; border-radius: 5px; color: #a8b4c8; text-decoration: none; white-space: nowrap; }
+.chat-export-options a:hover { color: var(--accent); background: var(--accent-soft); }
+
 /* Master password screen */
 .login-frame { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; position: relative; }
 .login-card { width: min(100%, 390px); padding: 34px 36px 26px; border: 1px solid rgba(120,160,220,.15); border-radius: 18px; background: rgba(17,24,38,.76); backdrop-filter: blur(18px); box-shadow: 0 28px 100px rgba(0,0,0,.24); }

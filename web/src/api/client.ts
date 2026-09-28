@@ -6,7 +6,8 @@ export class ApiError extends Error {
   readonly requestId?: string;
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.error?.message ?? `Request failed (${status})`);
+    const message = body.error?.message ?? `Request failed (${status})`;
+    super(body.error?.request_id ? `${message} · ref ${body.error.request_id.slice(0, 8)}` : message);
     this.name = "ApiError";
     this.status = status;
     this.code = body.error?.code;
@@ -25,6 +26,14 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, option
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
+    if (response.status >= 500 && path !== "/api/client-log") {
+      void import("../clientErrors").then(({ reportClientError }) => reportClientError({
+        level: "error",
+        message: `API request failed with status ${response.status}${body.error?.request_id ? ` · ref ${body.error.request_id}` : ""}`,
+        route: path.split("?")[0],
+        stack: new Error().stack,
+      })).catch(() => undefined);
+    }
     throw new ApiError(response.status, body);
   }
   if (response.status === 204) return undefined as T;

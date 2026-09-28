@@ -6,7 +6,6 @@ import { Login } from "./routes/Login";
 import { apiRequest } from "./api/client";
 import { fetchSettings } from "./api/settings";
 
-const AssistantStoreSpike = lazy(() => import("./routes/AssistantStoreSpike").then((module) => ({ default: module.AssistantStoreSpike })));
 const Setup = lazy(() => import("./routes/Setup").then((module) => ({ default: module.Setup })));
 const SettingsPage = lazy(() => import("./routes/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ChatPage = lazy(() => import("./routes/ChatPage").then((module) => ({ default: module.ChatPage })));
@@ -14,6 +13,8 @@ const ChatPage = lazy(() => import("./routes/ChatPage").then((module) => ({ defa
 const rootRoute = createRootRoute({
   component: () => <Outlet />,
 });
+
+const AssistantStoreSpike = lazy(() => import("./routes/AssistantStoreSpike").then((module) => ({ default: module.AssistantStoreSpike })));
 
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,

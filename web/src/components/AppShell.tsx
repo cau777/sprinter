@@ -1,28 +1,47 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Button } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleHelp, Command, LogOut, Menu, MessageSquarePlus, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { CircleHelp, Command, LogOut, Menu, MessageSquarePlus, Pencil, Search, Settings2, Sparkles, Trash2, X } from "lucide-react";
 import { apiRequest } from "../api/client";
 import { deleteChat, fetchChats, updateChat } from "../api/chats";
+import { ChatExportMenu } from "./ChatExportMenu";
+import { SearchDialog } from "./SearchDialog";
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const navigate = useNavigate();
   const currentPath = useRouterState({ select: (state) => state.location.pathname });
   const chatList = useQuery({ queryKey: ["chats"], queryFn: fetchChats });
   const currentChat = chatList.data?.items.find((chat) => `/${chat.id}` === currentPath);
   const pageName = currentPath === "/settings" ? "Settings" : currentPath === "/setup" ? "Workspace setup" : currentPath === "/spike/assistant-ui" ? "Runtime lab" : currentChat?.title || (currentChat ? "Conversation" : currentPath === "/" ? "New conversation" : "Conversation");
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (event.key.toLowerCase() === "k" && !event.shiftKey) {
+        event.preventDefault();
+        setSearchOpen(true);
+      } else if (event.key.toLowerCase() === "o" && event.shiftKey) {
+        event.preventDefault();
+        void navigate({ to: "/" });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
+
   return (
     <main className="app-frame">
       <aside className="sidebar glass-panel desktop-sidebar">
-        <SidebarContents onNavigate={() => setDrawerOpen(false)} />
+        <SidebarContents onNavigate={() => setDrawerOpen(false)} onSearch={() => setSearchOpen(true)} />
       </aside>
 
       {drawerOpen && <div className="mobile-drawer-scrim" onClick={() => setDrawerOpen(false)}>
         <aside className="sidebar glass-panel mobile-sidebar" onClick={(event) => event.stopPropagation()}>
           <Button isIconOnly className="drawer-close" variant="ghost" aria-label="Close navigation" onPress={() => setDrawerOpen(false)}><X size={17} /></Button>
-          <SidebarContents onNavigate={() => setDrawerOpen(false)} />
+          <SidebarContents onNavigate={() => setDrawerOpen(false)} onSearch={() => { setDrawerOpen(false); setSearchOpen(true); }} />
         </aside>
       </div>}
 
@@ -32,15 +51,16 @@ export function AppShell() {
             <Button isIconOnly className="mobile-menu-button" variant="ghost" aria-label="Open navigation" onPress={() => setDrawerOpen(true)}><Menu size={17} /></Button>
             <span className="topbar-kicker">WORKSPACE</span><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">{pageName}</span>
           </div>
-          <div className="topbar-right"><span className="connection-dot" /> <span>Local and private</span></div>
+          <div className="topbar-right">{currentChat && <ChatExportMenu chatId={currentChat.id} />}<span className="connection-dot" /> <span>Local and private</span></div>
         </header>
         <Outlet />
       </section>
+      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
     </main>
   );
 }
 
-function SidebarContents({ onNavigate }: { onNavigate: () => void }) {
+function SidebarContents({ onNavigate, onSearch }: { onNavigate: () => void; onSearch: () => void }) {
   async function logout() {
     await apiRequest("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);
     window.location.assign("/login");
@@ -54,9 +74,9 @@ function SidebarContents({ onNavigate }: { onNavigate: () => void }) {
 
     <div className="sidebar-actions">
       <Link to="/" className="new-chat-button" onClick={onNavigate}>
-        <MessageSquarePlus size={16} /><span>New chat</span><kbd>⌘ K</kbd>
+        <MessageSquarePlus size={16} /><span>New chat</span><kbd>⌘ ⇧ O</kbd>
       </Link>
-      <Button className="quiet-button" variant="ghost"><Search size={16} /><span>Search chats</span></Button>
+      <Button className="quiet-button" variant="ghost" onPress={onSearch}><Search size={16} /><span>Search chats</span><kbd>⌘ K</kbd></Button>
     </div>
 
     <div className="sidebar-section">
@@ -65,7 +85,6 @@ function SidebarContents({ onNavigate }: { onNavigate: () => void }) {
     </div>
 
     <div className="sidebar-bottom">
-      <Link to="/spike/assistant-ui" className="sidebar-link" onClick={onNavigate}><Bot size={16} /><span>Runtime spike</span><span className="demo-tag">DEMO</span></Link>
       <Link to="/settings" className="sidebar-link" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
       <button className="sidebar-link"><CircleHelp size={16} /><span>Help & shortcuts</span></button>
       <div className="sidebar-profile"><div className="profile-avatar">S</div><div><div className="profile-name">Sprinter</div><div className="profile-caption">Private workspace</div></div><Command className="profile-command" size={15} /></div>
