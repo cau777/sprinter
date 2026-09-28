@@ -16,10 +16,12 @@ import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings } from "../api/settings";
 import { DefaultModelPicker } from "../components/DefaultModelPicker";
+import { SelectField } from "../components/SelectField";
 import { siblingsFor, visiblePath } from "./branch";
 import { MarkdownText } from "./MarkdownText";
 import { deleteUpload, uploadFile, type UploadRecord } from "../api/uploads";
 import { useOnlineStatus } from "../api/useOnlineStatus";
+import { Button } from "@heroui/react";
 
 type Props = { chatId?: string; messageId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
@@ -165,7 +167,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
         };
       });
       void queryClient.invalidateQueries({ queryKey: ["chats"] });
-      if (!chatId) void navigate({ to: "/$chatId", params: { chatId: nextChatId } });
+      if (!chatId) void navigate({ to: "/$chatId", params: { chatId: nextChatId }, search: { messageId: undefined } });
     },
     onError: (error) => setDraftError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : "Could not send this message."),
   });
@@ -271,27 +273,27 @@ export function ChatInterface({ chatId, messageId }: Props) {
     onCancel: async () => { if (online && streamingMessage) await cancelMessage(streamingMessage.id).catch(() => undefined); },
   });
 
-  if (chatId && chatQuery.isLoading) return <section className="chat-loading">Opening conversation…</section>;
-  if (chatId && chatQuery.isError && !chatQuery.data) return <section className="chat-loading" role="alert">{chatQuery.error.message}</section>;
+  if (chatId && chatQuery.isLoading) return <section className="grid flex-1 place-items-center text-[11px] text-slate-400">Opening conversation…</section>;
+  if (chatId && chatQuery.isError && !chatQuery.data) return <section className="grid flex-1 place-items-center text-[11px] text-slate-400" role="alert">{chatQuery.error.message}</section>;
   const hasMessages = visibleMessages.length > 0;
 
-  return <section className={`conversation-stage ${hasMessages ? "has-messages" : ""}`} onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files.map((file) => file.type.startsWith("image/") ? pastedImageName(file) : file)); } }} onDragOver={(event) => { if (online && Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); void addFiles(event.dataTransfer.files); } }}>
-    <input ref={fileInput} className="attachment-file-input" type="file" multiple disabled={!online} accept={`${canSendImages ? "image/png,image/jpeg,image/webp,image/gif," : ""}.pdf,.txt,.md,.csv,.json,.yaml,.yml,.toml,.xml,.html,.css,.js,.ts,.tsx,.jsx,.rs,.py,.go,.sh,.sql,.log`} onChange={(event) => { if (event.currentTarget.files) void addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
-    {!hasMessages && <div className="welcome-content">
-      <div className="welcome-icon"><Sparkles size={22} /></div>
-      <p className="eyebrow">A CLEARER WAY TO THINK</p>
-      <h1>What’s on your mind<span>?</span></h1>
-      <p className="welcome-copy">A thought, a question, a half-formed idea.<br />Start anywhere. We’ll take it from there.</p>
-      <div className="prompt-suggestions">
-        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me think through an idea.", null)}><span className="suggestion-icon">✳</span><span><b>Think it through</b><small>Help me explore an idea</small></span></button>
-        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me make something.", null)}><span className="suggestion-icon">⌘</span><span><b>Make something</b><small>Write, plan, or create</small></span></button>
-        <button className="suggestion-card" type="button" disabled={!online} onClick={() => submit("Help me get unstuck.", null)}><span className="suggestion-icon">◒</span><span><b>Get unstuck</b><small>Break down a problem</small></span></button>
+  return <section className={`flex min-h-0 flex-1 flex-col items-center justify-center px-[22px] pt-[18px] pb-[21px] max-[720px]:px-[15px] max-[720px]:pt-[18px] max-[720px]:pb-[calc(12px+env(safe-area-inset-bottom))] ${hasMessages ? "!items-stretch !justify-start !pt-[11px]" : ""}`} onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files.map((file) => file.type.startsWith("image/") ? pastedImageName(file) : file)); } }} onDragOver={(event) => { if (online && Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); void addFiles(event.dataTransfer.files); } }}>
+    <input ref={fileInput} className="hidden" type="file" multiple disabled={!online} accept={`${canSendImages ? "image/png,image/jpeg,image/webp,image/gif," : ""}.pdf,.txt,.md,.csv,.json,.yaml,.yml,.toml,.xml,.html,.css,.js,.ts,.tsx,.jsx,.rs,.py,.go,.sh,.sql,.log`} onChange={(event) => { if (event.currentTarget.files) void addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
+    {!hasMessages && <div className="w-full max-w-[610px] -translate-y-[11px] text-center max-[720px]:-translate-y-[3px]">
+      <div className="mx-auto mb-[21px] grid size-[52px] place-items-center rounded-[17px] border border-[rgba(61,232,255,.18)] bg-[linear-gradient(145deg,rgba(61,232,255,.11),rgba(61,232,255,.025))] text-[var(--accent)] shadow-[0_10px_42px_rgba(61,232,255,.07)] max-[720px]:mb-[17px] max-[720px]:size-[45px]"><Sparkles size={22} /></div>
+      <p className="mb-[11px] font-mono text-[9px] tracking-[.16em] text-slate-400">A CLEARER WAY TO THINK</p>
+      <h1 className="m-0 font-display text-[clamp(28px,3vw,38px)] font-medium leading-[1.3] tracking-[-.045em] text-slate-100 max-[720px]:text-[28px]">What’s on your mind<span className="text-[var(--accent)]">?</span></h1>
+      <p className="mt-[11px] mb-[25px] text-[13px] leading-[1.75] text-[var(--text-muted)] max-[720px]:text-xs">A thought, a question, a half-formed idea.<br />Start anywhere. We’ll take it from there.</p>
+      <div className="mx-auto grid w-full grid-cols-3 gap-[9px] text-left max-[720px]:max-w-[410px] max-[720px]:grid-cols-1 max-[720px]:gap-[7px]">
+        <Button variant="outline" className="flex min-w-0 items-center gap-2 rounded-xl border-[var(--border)] bg-[rgba(18,25,40,.46)] px-3 py-3 text-left text-slate-400 transition hover:border-[var(--accent-line)] hover:bg-[rgba(20,32,48,.7)]" isDisabled={!online} onPress={() => submit("Help me think through an idea.", null)}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/5 text-sm text-slate-400">✳</span><span className="min-w-0 text-left"><b className="block whitespace-nowrap text-[10px] font-semibold text-slate-200">Think it through</b><small className="whitespace-nowrap text-[9px] text-slate-500">Help me explore an idea</small></span></Button>
+        <Button variant="outline" className="flex min-w-0 items-center gap-2 rounded-xl border-[var(--border)] bg-[rgba(18,25,40,.46)] px-3 py-3 text-left text-slate-400 transition hover:border-[var(--accent-line)] hover:bg-[rgba(20,32,48,.7)]" isDisabled={!online} onPress={() => submit("Help me make something.", null)}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/5 text-sm text-slate-400">⌘</span><span className="min-w-0 text-left"><b className="block whitespace-nowrap text-[10px] font-semibold text-slate-200">Make something</b><small className="whitespace-nowrap text-[9px] text-slate-500">Write, plan, or create</small></span></Button>
+        <Button variant="outline" className="flex min-w-0 items-center gap-2 rounded-xl border-[var(--border)] bg-[rgba(18,25,40,.46)] px-3 py-3 text-left text-slate-400 transition hover:border-[var(--accent-line)] hover:bg-[rgba(20,32,48,.7)]" isDisabled={!online} onPress={() => submit("Help me get unstuck.", null)}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/5 text-sm text-slate-400">◒</span><span className="min-w-0 text-left"><b className="block whitespace-nowrap text-[10px] font-semibold text-slate-200">Get unstuck</b><small className="whitespace-nowrap text-[9px] text-slate-500">Break down a problem</small></span></Button>
       </div>
     </div>}
 
     {hasMessages && <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root className="chat-thread-root">
-        <ThreadPrimitive.Viewport className="chat-thread" turnAnchor="bottom">
+      <ThreadPrimitive.Root className="mx-auto flex min-h-0 w-full max-w-[790px] flex-1 flex-col">
+        <ThreadPrimitive.Viewport className="min-h-0 flex-1 overflow-y-auto px-5 pt-2.5 pb-[18px] max-[720px]:px-0.5 max-[720px]:pt-1 max-[720px]:pb-3" turnAnchor="bottom">
           <ThreadPrimitive.Messages>{({ message }) => {
             const item = messageList.find((candidate) => candidate.id === message.id);
             const original = detail?.messages.find((candidate) => candidate.id === message.id);
@@ -299,35 +301,32 @@ export function ChatInterface({ chatId, messageId }: Props) {
             const branchIndex = siblings.findIndex((candidate) => candidate.id === message.id);
             const user = message.role === "user";
             const editing = user && message.composer.isEditing;
-            return <MessagePrimitive.Root key={message.id} className="chat-message" data-message-id={message.id} data-search-target={searchHighlight === message.id ? "true" : undefined} data-message-status={item?.generationStatus ?? "complete"} tabIndex={-1} data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
-              <div className="chat-message-role">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
-              {editing ? <ComposerPrimitive.Root className="composer-card chat-composer chat-edit-composer">
-                <ComposerPrimitive.Input aria-label="Message" placeholder="Edit message…" rows={2} disabled={!online} />
+            return <MessagePrimitive.Root key={message.id} className="max-w-full border-b border-[rgba(120,160,220,.08)] px-0.5 pt-[19px] pb-4 data-[role=user]:ml-auto data-[role=user]:max-w-[88%] data-[role=user]:rounded-[14px] data-[role=user]:border data-[role=user]:border-[rgba(120,160,220,.11)] data-[role=user]:bg-[rgba(18,26,41,.65)] data-[role=user]:px-4 data-[role=user]:py-3.5 data-[role=assistant]:border-l-2 data-[role=assistant]:border-l-[var(--border)] data-[role=assistant]:pl-4 max-[720px]:data-[role=user]:max-w-[94%]" data-message-id={message.id} data-search-target={searchHighlight === message.id ? "true" : undefined} data-message-status={item?.generationStatus ?? "complete"} tabIndex={-1} data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
+              <div className="mb-2 font-mono text-[8px] tracking-[.13em] text-slate-500">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span className="ml-[7px] text-[var(--accent)]"> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
+              {editing ? <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)]">
+                <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Edit message…" rows={2} disabled={!online} />
                 <UploadChips items={pendingUploads} onRemove={removeUpload} />
-                <div className="composer-toolbar"><button type="button" className="attach-button" onClick={() => fileInput.current?.click()} aria-label="Attach files" disabled={!online}><Paperclip size={14} /> Add files</button><span className="enter-hint">Press enter to save</span><div className="composer-right"><ComposerPrimitive.Cancel className="edit-cancel-button" onClick={() => setPendingUploads([])}>Cancel</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="send-button" aria-label="Save edited message" disabled={!online}><ArrowUpRight size={17} /></ComposerPrimitive.Send></div></div>
+                <div className="flex items-center justify-between"><Button variant="outline" className="h-8 min-w-8 gap-1 rounded-lg border border-[var(--border)] bg-[rgba(20,27,43,.5)] px-2 text-[9px] text-slate-400 hover:border-[var(--accent-line)] hover:text-[var(--accent)]" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online}><Paperclip size={14} /> Add files</Button><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">Press enter to save</span><div className="flex items-center gap-[9px]"><ComposerPrimitive.Cancel className="edit-cancel-button" onClick={() => setPendingUploads([])}>Cancel</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="flex h-8 min-w-8 items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--on-accent)] shadow-[0_0_14px_rgba(61,232,255,.19)]" aria-label="Save edited message" disabled={!online}><ArrowUpRight size={17} /></ComposerPrimitive.Send></div></div>
               </ComposerPrimitive.Root> : <div className="chat-message-content"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div>}
               {user && !editing && original?.attachments.length ? <UploadChips items={original.attachments.map((record) => ({ key: record.upload_id, record, progress: 100, uploading: false, persisted: true }))} /> : null}
-              {!user && item?.generationStatus === "error" && <div className="chat-message-error" role="alert">{item.error ?? "The response could not be completed."}</div>}
-              {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="chat-message-state">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
-              <div className="chat-message-tools">
+              {!user && item?.generationStatus === "error" && <div className="mt-[9px] text-[10px] text-rose-300" role="alert">{item.error ?? "The response could not be completed."}</div>}
+              {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="mt-2 text-[9px] text-slate-400">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
+              <div className="chat-message-tools mt-[9px] flex items-center gap-[9px] text-slate-500">
                 {user && original && <>
                   {online && <ActionBarPrimitive.Root><ActionBarPrimitive.Edit onClick={() => beginEdit(original)}>Edit</ActionBarPrimitive.Edit></ActionBarPrimitive.Root>}
-                  <button type="button" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onClick={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</button>
+                  <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</Button>
                 </>}
                 {!user && item?.generationStatus !== "streaming" && <>
-                  {original && <button type="button" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onClick={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</button>}
-                  <button type="button" onClick={() => retry.mutate({ messageId: message.id, model: retryModels[message.id] || undefined })} disabled={!online || retry.isPending}><RotateCw size={12} /> Retry</button>
-                  <select aria-label={`Retry model for message ${message.id}`} value={retryModels[message.id] ?? ""} disabled={!online} onChange={(event) => setRetryModels((current) => ({ ...current, [message.id]: event.target.value }))}>
-                    <option value="">Same model</option>
-                    {modelQuery.data?.items.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
-                  </select>
+                  {original && <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</Button>}
+                  <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" onPress={() => retry.mutate({ messageId: message.id, model: retryModels[message.id] || undefined })} isDisabled={!online || retry.isPending}><RotateCw size={12} /> Retry</Button>
+                  <SelectField aria-label={`Retry model for message ${message.id}`} className="max-w-40" value={retryModels[message.id] ?? ""} isDisabled={!online} onChange={(value) => setRetryModels((current) => ({ ...current, [message.id]: value }))} options={[{ value: "", label: "Same model" }, ...(modelQuery.data?.items.map((model) => ({ value: model.id, label: model.name })) ?? [])]} />
                 </>}
-                {siblings.length > 1 && <div className="message-branch-picker" aria-label={`${user ? "User" : "Assistant"} branch`}>
-                  <button type="button" aria-label={`Previous branch for message ${message.id}`} disabled={!online || branchIndex <= 0 || switchMutation.isPending} onClick={() => switchMutation.mutate(siblings[branchIndex - 1].id)}>‹</button>
+                {siblings.length > 1 && <div className="ml-auto inline-flex items-center gap-[3px] font-mono text-[10px] text-slate-300" aria-label={`${user ? "User" : "Assistant"} branch`}>
+                  <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Previous branch for message ${message.id}`} isDisabled={!online || branchIndex <= 0 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex - 1].id)}>‹</Button>
                   <span>{branchIndex + 1} / {siblings.length}</span>
-                  <button type="button" aria-label={`Next branch for message ${message.id}`} disabled={!online || branchIndex >= siblings.length - 1 || switchMutation.isPending} onClick={() => switchMutation.mutate(siblings[branchIndex + 1].id)}>›</button>
+                  <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Next branch for message ${message.id}`} isDisabled={!online || branchIndex >= siblings.length - 1 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex + 1].id)}>›</Button>
                 </div>}
-                {!user && original && (original.prompt_tokens != null || original.completion_tokens != null || original.cost != null) && <span className="message-usage" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
+                {!user && original && (original.prompt_tokens != null || original.completion_tokens != null || original.cost != null) && <span className="ml-auto whitespace-nowrap font-mono text-[8px] text-slate-500" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
               </div>
             </MessagePrimitive.Root>;
           }}</ThreadPrimitive.Messages>
@@ -336,37 +335,37 @@ export function ChatInterface({ chatId, messageId }: Props) {
     </AssistantRuntimeProvider>}
     {streamingMessage && !streamingMessage.content && <div className="chat-thinking" role="status">THINKING…</div>}
 
-    <div className="composer-wrap">
-      {draftError && <div className="chat-send-error" role="alert">{draftError}{draftError.toLowerCase().includes("api key") && <a href="/settings">Open Settings</a>}</div>}
-      {fileError && <div className="chat-send-error" role="alert">{fileError}<button type="button" onClick={() => setFileError(undefined)} aria-label="Dismiss upload error"><X size={12} /></button></div>}
-      {!canSendImages && visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "image")) && <div className="attachment-warning" role="status">This model cannot read images attached earlier in this conversation.</div>}
+    <div className="mt-auto w-full max-w-[710px] max-[720px]:mt-5">
+      {draftError && <div className="mx-auto mb-2 max-w-[710px] rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{draftError}{draftError.toLowerCase().includes("api key") && <a className="ml-2 text-[var(--accent)]" href="/settings">Open Settings</a>}</div>}
+      {fileError && <div className="mx-auto mb-2 flex max-w-[710px] items-center justify-between rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{fileError}<Button isIconOnly variant="ghost" className="h-6 w-6 text-rose-300" onPress={() => setFileError(undefined)} aria-label="Dismiss upload error"><X size={12} /></Button></div>}
+      {!canSendImages && visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "image")) && <div className="mx-auto mb-2 max-w-[700px] text-[9px] text-amber-200" role="status">This model cannot read images attached earlier in this conversation.</div>}
       <AssistantRuntimeProvider runtime={runtime}>
-        <ComposerPrimitive.Root className="composer-card chat-composer">
-          <ComposerPrimitive.Input aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
+        <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)] data-[disabled=true]:opacity-55 max-[720px]:px-[11px] max-[720px]:pt-[11px] max-[720px]:pb-2">
+          <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
           <UploadChips items={pendingUploads} onRemove={removeUpload} />
-          {(pendingUploads.some((item) => item.record?.kind === "pdf") || visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "pdf"))) && <label className="pdf-engine-control">PDF engine <select aria-label="PDF engine for this send" value={pdfEngine} disabled={!online} onChange={(event) => setPdfEngine(event.target.value)}><option value="">Settings default ({settingsQuery.data?.pdf_engine ?? "cloudflare-ai"})</option><option value="cloudflare-ai">Cloudflare AI</option><option value="mistral-ocr">Mistral OCR</option><option value="native">Native</option></select></label>}
-          <div className="composer-toolbar"><div className="composer-left"><button type="button" className="attach-button" onClick={() => fileInput.current?.click()} aria-label="Attach files" disabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</button>{!chatId && <DefaultModelPicker isDisabled={!online} />}</div><div className="composer-right"><span className="enter-hint">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="stop-button" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="send-button" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading)}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
+          {(pendingUploads.some((item) => item.record?.kind === "pdf") || visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "pdf"))) && <label className="flex items-center gap-2 pb-2 pl-1 font-mono text-[8px] text-slate-400">PDF engine <SelectField aria-label="PDF engine for this send" className="min-w-48" value={pdfEngine} isDisabled={!online} onChange={setPdfEngine} options={[{ value: "", label: `Settings default (${settingsQuery.data?.pdf_engine ?? "cloudflare-ai"})` }, { value: "cloudflare-ai", label: "Cloudflare AI" }, { value: "mistral-ocr", label: "Mistral OCR" }, { value: "native", label: "Native" }]} /></label>}
+          <div className="flex items-center justify-between"><div className="flex items-center gap-[9px]"><Button variant="outline" className="h-8 min-w-8 gap-1 rounded-lg border border-[var(--border)] bg-[rgba(20,27,43,.5)] px-2 text-[9px] text-slate-400 hover:border-[var(--accent-line)] hover:text-[var(--accent)]" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</Button>{!chatId && <DefaultModelPicker isDisabled={!online} />}</div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg border border-rose-400/20 bg-rose-400/10 px-2 text-[9px] text-rose-300" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="flex h-8 min-w-8 items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--on-accent)] shadow-[0_0_14px_rgba(61,232,255,.19)]" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading)}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
         </ComposerPrimitive.Root>
       </AssistantRuntimeProvider>
-      <p className="composer-caption">Sprinter can make mistakes. Check important information.</p>
+      <p className="mt-2 mb-0 text-center text-[9px] text-slate-600">Sprinter can make mistakes. Check important information.</p>
     </div>
   </section>;
 }
 
 function UploadChips({ items, onRemove }: { items: PendingUpload[]; onRemove?: (item: PendingUpload) => void }) {
   if (!items.length) return null;
-  return <div className="chat-attachment-list" aria-label="Attachments">
+  return <div className="flex flex-wrap gap-1.5 py-1" aria-label="Attachments">
     {items.map((item) => {
       const file = item.record;
       const id = file?.upload_id;
       const filename = file?.filename ?? item.filename ?? "Uploading file";
       const image = file?.kind === "image";
-      return <div className={`chat-attachment-chip ${item.error ? "has-error" : ""}`} key={item.key}>
-        {image && id ? onRemove ? <img className="chat-attachment-thumb" src={`/api/uploads/${encodeURIComponent(id)}`} alt="" /> : <a href={`/api/uploads/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}><img className="chat-attachment-thumb" src={`/api/uploads/${encodeURIComponent(id)}`} alt="" /></a> : <span className="chat-attachment-icon">{file?.kind === "pdf" || file?.kind === "text" ? <FileText size={14} /> : <ImageIcon size={14} />}</span>}
-        <span className="chat-attachment-name" title={filename}>{filename}<small>{item.error ?? (item.uploading ? `Uploading ${item.progress}%` : file ? `${formatBytes(file.size)} · ${file.kind}` : "Preparing upload…")}</small></span>
-        {item.uploading && <span className="chat-upload-progress" style={{ width: `${Math.max(4, item.progress)}%` }} />}
-        {onRemove && <button type="button" className="chat-attachment-remove" onClick={() => onRemove(item)} aria-label={`Remove ${filename}`}><X size={13} /></button>}
-        {id && !onRemove && !image && <a className="chat-attachment-open" href={`/api/uploads/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}>Open</a>}
+      return <div className={`relative flex min-h-[38px] w-[min(220px,100%)] items-center gap-[7px] overflow-hidden rounded-lg border px-[7px] py-[5px] text-[#a9b5c8] ${item.error ? "border-rose-400/40" : "border-[rgba(120,160,220,.13)]"} bg-[rgba(7,12,22,.55)]`} key={item.key}>
+        {image && id ? onRemove ? <img className="size-[30px] shrink-0 rounded object-cover" src={`/api/uploads/${encodeURIComponent(id)}`} alt="" /> : <a href={`/api/uploads/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}><img className="size-[30px] shrink-0 rounded object-cover" src={`/api/uploads/${encodeURIComponent(id)}`} alt="" /></a> : <span className="grid size-7 shrink-0 place-items-center rounded bg-[var(--accent-soft)] text-[var(--accent)]">{file?.kind === "pdf" || file?.kind === "text" ? <FileText size={14} /> : <ImageIcon size={14} />}</span>}
+        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] text-slate-200" title={filename}>{filename}<small className={`mt-0.5 block font-mono text-[8px] ${item.error ? "text-rose-300" : "text-slate-500"}`}>{item.error ?? (item.uploading ? `Uploading ${item.progress}%` : file ? `${formatBytes(file.size)} · ${file.kind}` : "Preparing upload…")}</small></span>
+        {item.uploading && <span className="absolute bottom-0 left-0 h-0.5 bg-[var(--accent)] transition-[width] duration-150" style={{ width: `${Math.max(4, item.progress)}%` }} />}
+        {onRemove && <Button isIconOnly variant="ghost" className="ml-auto h-5 w-5 shrink-0 rounded-md text-slate-500 hover:bg-rose-500/10 hover:text-rose-300" onPress={() => onRemove(item)} aria-label={`Remove ${filename}`}><X size={13} /></Button>}
+        {id && !onRemove && !image && <a className="ml-auto text-[8px] text-[var(--accent)] no-underline" href={`/api/uploads/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}>Open</a>}
       </div>;
     })}
   </div>;

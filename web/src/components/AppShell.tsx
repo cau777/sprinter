@@ -59,33 +59,33 @@ export function AppShell() {
   }, [navigate]);
 
   return (
-    <main className="app-frame">
-      <aside className="sidebar glass-panel desktop-sidebar">
+    <main className="flex min-h-dvh gap-3 p-3 max-[720px]:gap-0 max-[720px]:p-0">
+      <aside className="flex min-h-[calc(100dvh-24px)] w-[250px] shrink-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--panel)] px-[13px] pt-5 pb-3 backdrop-blur-[18px] max-[720px]:hidden">
         <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => setSearchOpen(true)} />
       </aside>
 
-      {drawerOpen && <div className="mobile-drawer-scrim" onClick={() => setDrawerOpen(false)}>
-        <aside className="sidebar glass-panel mobile-sidebar" onClick={(event) => event.stopPropagation()}>
-          <Button isIconOnly className="drawer-close" variant="ghost" aria-label="Close navigation" onPress={() => setDrawerOpen(false)}><X size={17} /></Button>
+      {drawerOpen && <div className="fixed inset-0 z-20 bg-[rgba(1,4,10,.65)] backdrop-blur-[3px]" onClick={() => setDrawerOpen(false)}>
+        <aside className="absolute inset-y-2 left-2 z-[21] flex w-[min(285px,calc(100vw-40px))] min-h-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--panel)] px-[13px] pt-5 pb-3 shadow-[20px_0_70px_rgba(0,0,0,.32)] backdrop-blur-[18px] animate-[drawer-in_.17s_ease-out]" onClick={(event) => event.stopPropagation()}>
+          <Button isIconOnly className="absolute right-3 top-4 z-10 hidden h-7 w-7 text-slate-400 max-[720px]:flex" variant="ghost" aria-label="Close navigation" onPress={() => setDrawerOpen(false)}><X size={17} /></Button>
           <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => { setDrawerOpen(false); setSearchOpen(true); }} />
         </aside>
       </div>}
 
-      <section className="main-panel">
-        {!online && <div className="pwa-status-banner" role="status">You’re offline. Saved conversations are available to read.</div>}
-        {needRefresh && !generationOpen && <div className="pwa-status-banner pwa-update-banner" role="status">
+      <section className="flex min-h-[calc(100dvh-24px)] min-w-0 flex-1 flex-col max-[720px]:min-h-dvh">
+        {!online && <div className="flex items-center justify-center gap-3 border-b border-amber-300/20 bg-amber-300/10 px-3.5 py-2 text-center text-[11px] text-amber-200" role="status">You’re offline. Saved conversations are available to read.</div>}
+        {needRefresh && !generationOpen && <div className="flex items-center justify-center gap-3 border-b border-cyan-300/20 bg-cyan-300/10 px-3.5 py-2 text-center text-[11px] text-cyan-100" role="status">
           <span>A Sprinter update is ready.</span>
-          <button type="button" onClick={() => void updateServiceWorker(true)}>Reload to update</button>
+          <Button variant="ghost" className="rounded-md border border-[var(--accent-line)] bg-[var(--accent-soft)] px-2 py-1 text-[10px] text-[var(--accent)]" onPress={() => void updateServiceWorker(true)}>Reload to update</Button>
         </div>}
-        <header className="topbar">
-          <div className="breadcrumb">
-            <Button isIconOnly className="mobile-menu-button" variant="ghost" aria-label="Open navigation" onPress={() => setDrawerOpen(true)}><Menu size={17} /></Button>
-            <span className="topbar-kicker">WORKSPACE</span><span className="breadcrumb-slash">/</span><span className="breadcrumb-current">{pageName}</span>
+        <header className="flex h-[55px] shrink-0 items-center justify-between border-b border-[rgba(120,160,220,.08)] px-[23px] max-[720px]:h-[49px] max-[720px]:px-[15px]">
+          <div className="flex min-w-0 flex-1 items-center gap-[11px]">
+            <Button isIconOnly className="-ml-2 hidden h-8 w-8 text-slate-400 max-[720px]:grid" variant="ghost" aria-label="Open navigation" onPress={() => setDrawerOpen(true)}><Menu size={17} /></Button>
+            <span className="font-mono text-[9px] tracking-[.1em] text-slate-500 max-[720px]:hidden">WORKSPACE</span><span className="text-slate-700 max-[720px]:hidden">/</span><span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-slate-300">{pageName}</span>
           </div>
-          <div className="topbar-right">
-            {activeChatId && modelsQuery.data && settingsQuery.data && <div className="topbar-model-picker"><ModelPicker models={modelsQuery.data.items} value={currentChatQuery.data?.model ?? currentChat?.model ?? null} favorites={settingsQuery.data.favorite_models} isDisabled={!online || modelChange.isPending} onChange={(model) => modelChange.mutate({ chatId: activeChatId, model })} placeholder="Choose model" /></div>}
+          <div className="flex items-center gap-2 text-[10px] text-slate-500 max-[720px]:gap-1.5 max-[720px]:text-[9px]">
+            {activeChatId && modelsQuery.data && settingsQuery.data && <div className="w-[190px] min-w-0 max-[720px]:w-[min(145px,37vw)]"><ModelPicker compact models={modelsQuery.data.items} value={currentChatQuery.data?.model ?? currentChat?.model ?? null} favorites={settingsQuery.data.favorite_models} isDisabled={!online || modelChange.isPending} onChange={(model) => modelChange.mutate({ chatId: activeChatId, model })} placeholder="Choose model" /></div>}
             {activeChatId && <ChatExportMenu chatId={activeChatId} />}
-            <span className="connection-dot" /> <span>Local and private</span>
+            <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(74,222,154,.35)] max-[720px]:hidden" /> <span className="max-[720px]:hidden">Local and private</span>
           </div>
         </header>
         <Outlet />
@@ -106,28 +106,28 @@ function SidebarContents({ online, onNavigate, onSearch }: { online: boolean; on
   }
 
   return <>
-    <Link to="/" className="brand" aria-label="Sprinter home" onClick={onNavigate}>
-      <span className="brand-mark"><Sparkles size={17} strokeWidth={1.8} /></span>
+    <Link to="/" className="flex items-center gap-2.5 px-[9px] pt-0.5 pb-[23px] font-display text-[15px] font-bold leading-none tracking-[.16em] text-white no-underline" aria-label="Sprinter home" onClick={onNavigate}>
+      <span className="grid size-[29px] place-items-center rounded-[9px] bg-[var(--accent)] text-[var(--bg)] shadow-[0_0_22px_rgba(61,232,255,.2)]"><Sparkles size={17} strokeWidth={1.8} /></span>
       <span>SPRINTER</span>
     </Link>
 
-    <div className="sidebar-actions">
-      <Link to="/" className="new-chat-button" onClick={onNavigate}>
+    <div className="grid gap-[7px]">
+      <Link to="/" className="flex h-10 w-full items-center gap-2.5 rounded-xl border border-[var(--accent-line)] bg-[rgba(61,232,255,.025)] px-3 text-xs text-[var(--accent)] no-underline" onClick={onNavigate}>
         <MessageSquarePlus size={16} /><span>New chat</span><kbd>⌘ ⇧ O</kbd>
       </Link>
-      <Button className="quiet-button" variant="ghost" onPress={onSearch}><Search size={16} /><span>Search chats</span><kbd>⌘ K</kbd></Button>
+      <Button className="h-10 w-full justify-start gap-2.5 rounded-xl px-3 text-xs text-slate-400" variant="ghost" onPress={onSearch}><Search size={16} /><span>Search chats</span><kbd className="ml-auto rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-slate-500">⌘ K</kbd></Button>
     </div>
 
-    <div className="sidebar-section">
-      <div className="section-label">YOUR SPACE</div>
+    <div className="px-2 pt-[30px] pb-3">
+      <div className="mb-3 font-mono text-[10px] tracking-[.09em] text-slate-600">YOUR SPACE</div>
       <ConversationList online={online} onNavigate={onNavigate} />
     </div>
 
-    <div className="sidebar-bottom">
-      <Link to="/settings" className="sidebar-link" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
-      <button className="sidebar-link"><CircleHelp size={16} /><span>Help & shortcuts</span></button>
-      <div className="sidebar-profile"><div className="profile-avatar">S</div><div><div className="profile-name">Sprinter</div><div className="profile-caption">Private workspace</div></div><Command className="profile-command" size={15} /></div>
-      <button className="sidebar-link logout-link" onClick={() => void logout()}><LogOut size={15} /><span>Log out</span></button>
+    <div className="mt-auto grid gap-1">
+      <Link to="/settings" className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-xs text-slate-400 no-underline hover:bg-white/5 hover:text-slate-100" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
+      <Button variant="ghost" className="justify-start gap-2.5 rounded-lg px-2 py-2 text-left text-xs text-slate-400 hover:bg-white/5 hover:text-slate-100"><CircleHelp size={16} /><span>Help & shortcuts</span></Button>
+      <div className="mt-[9px] flex items-center gap-2.5 border-t border-[var(--border)] px-[5px] pt-[15px] pb-1"><div className="grid size-[30px] place-items-center rounded-[10px] bg-[linear-gradient(145deg,#26354d,#152032)] font-display text-xs font-semibold text-slate-300">S</div><div><div className="text-[11px] font-semibold text-slate-200">Sprinter</div><div className="text-[10px] text-slate-500">Private workspace</div></div><Command className="ml-auto text-slate-500" size={15} /></div>
+      <Button variant="ghost" className="w-full justify-start gap-2.5 rounded-lg px-2 py-2 text-left text-xs text-slate-500 hover:bg-white/5 hover:text-slate-100" onPress={() => void logout()}><LogOut size={15} /><span>Log out</span></Button>
     </div>
   </>;
 }
@@ -145,16 +145,16 @@ function ConversationList({ online, onNavigate }: { online: boolean; onNavigate:
     return deleteChat(id);
   }, onSuccess: (_, id) => { queryClient.invalidateQueries({ queryKey: ["chats"] }); queryClient.removeQueries({ queryKey: ["chat", id] }); if (window.location.pathname === `/${id}`) void navigate({ to: "/" }); } });
   const chats = query.data?.items ?? [];
-  if (query.isLoading) return <div className="sidebar-empty"><span className="empty-dot" />Loading conversations…</div>;
-  if (!chats.length) return <div className="sidebar-empty"><span className="empty-dot" />Your conversations will appear here.</div>;
+  if (query.isLoading) return <div className="flex gap-2 px-px py-2 text-[11px] leading-snug text-slate-500"><span className="mt-1.5 size-[5px] shrink-0 rounded-full bg-slate-600" />Loading conversations…</div>;
+  if (!chats.length) return <div className="flex gap-2 px-px py-2 text-[11px] leading-snug text-slate-500"><span className="mt-1.5 size-[5px] shrink-0 rounded-full bg-slate-600" />Your conversations will appear here.</div>;
   const groups = new Map<string, typeof chats>();
   for (const chat of chats) {
     const age = Date.now() - chat.updated_at;
     const group = age < 86_400_000 ? "Today" : age < 7 * 86_400_000 ? "Previous 7 days" : "Earlier";
     groups.set(group, [...(groups.get(group) ?? []), chat]);
   }
-  return <div className="conversation-list">{["Today", "Previous 7 days", "Earlier"].map((group) => {
+  return <div className="grid gap-[15px]">{["Today", "Previous 7 days", "Earlier"].map((group) => {
     const items = groups.get(group);
-    return items?.length ? <div className="conversation-group" key={group}><div className="conversation-group-heading">{group}</div>{items.map((chat) => <div key={chat.id} className="conversation-row"><Link to="/$chatId" params={{ chatId: chat.id }} className="conversation-link" onClick={onNavigate}>{chat.title || "New conversation"}</Link><div className="conversation-actions"><button type="button" aria-label={`Rename ${chat.title || "conversation"}`} disabled={!online} onClick={() => { const title = window.prompt("Rename conversation", chat.title || ""); if (title?.trim()) rename.mutate({ id: chat.id, title: title.trim() }); }}><Pencil size={12} /></button><button type="button" aria-label={`Delete ${chat.title || "conversation"}`} disabled={!online} onClick={() => { if (window.confirm("Delete this conversation?")) remove.mutate(chat.id); }}><Trash2 size={12} /></button></div></div>)}</div> : null;
+    return items?.length ? <div className="grid gap-0.5" key={group}><div className="px-px pt-0.5 pb-1.5 font-mono text-[8px] uppercase tracking-[.11em] text-slate-600">{group}</div>{items.map((chat) => <div key={chat.id} className="group flex min-w-0 items-center rounded-md hover:bg-white/[.035]"><Link to="/$chatId" params={{ chatId: chat.id }} search={{ messageId: undefined }} className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-0.5 py-1.5 pl-[7px] text-[10px] text-slate-400 no-underline hover:text-slate-100" onClick={onNavigate}>{chat.title || "New conversation"}</Link><div className="flex gap-px opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-[720px]:opacity-100"><Button isIconOnly variant="ghost" className="h-6 w-6 rounded-md text-slate-500 hover:text-[var(--accent)]" aria-label={`Rename ${chat.title || "conversation"}`} isDisabled={!online} onPress={() => { const title = window.prompt("Rename conversation", chat.title || ""); if (title?.trim()) rename.mutate({ id: chat.id, title: title.trim() }); }}><Pencil size={12} /></Button><Button isIconOnly variant="ghost" className="h-6 w-6 rounded-md text-slate-500 hover:text-[var(--danger)]" aria-label={`Delete ${chat.title || "conversation"}`} isDisabled={!online} onPress={() => { if (window.confirm("Delete this conversation?")) remove.mutate(chat.id); }}><Trash2 size={12} /></Button></div></div>)}</div> : null;
   })}</div>;
 }

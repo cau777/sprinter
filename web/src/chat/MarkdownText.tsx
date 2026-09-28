@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useId, useState, type ComponentPropsWithoutRef } from "react";
+import { Button } from "@heroui/react";
 import { useMessagePartText, useAuiState } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import type { CodeHeaderProps, SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
@@ -67,11 +68,10 @@ function CopyCode({ language, code }: CodeHeaderProps) {
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   };
-  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><button type="button" onClick={(event) => {
-    event.preventDefault();
+  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><Button variant="ghost" className="rounded px-2 py-1 font-mono text-[9px] text-slate-300 hover:bg-white/10" onPress={() => {
     setCopied(true);
     copy();
-  }}>{copied ? "Copied" : "Copy"}</button></div>;
+  }}>{copied ? "Copied" : "Copy"}</Button></div>;
 }
 
 function SafeLink({ children, href, ...props }: ComponentPropsWithoutRef<"a">) {

@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Button } from "@heroui/react";
 
 type ClientError = {
   level: "error" | "warn" | "info";
@@ -80,7 +81,7 @@ export class ClientErrorBoundary extends Component<BoundaryProps, BoundaryState>
 
   render() {
     if (this.state.failed) {
-      return <main className="route-loading" role="alert"><div><h1>Something went wrong</h1><p>Reload Sprinter to continue.</p><button type="button" onClick={() => window.location.reload()}>Reload</button></div></main>;
+      return <main className="route-loading" role="alert"><div><h1>Something went wrong</h1><p>Reload Sprinter to continue.</p><Button variant="primary" onPress={() => window.location.reload()}>Reload</Button></div></main>;
     }
     return this.props.children;
   }
