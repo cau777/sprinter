@@ -9,7 +9,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "prompt",
-      includeAssets: ["sprinter.svg"],
+      includeAssets: ["sprinter.svg", "sprinter-maskable.svg"],
       manifest: {
         name: "Sprinter",
         short_name: "Sprinter",
@@ -19,7 +19,8 @@ export default defineConfig({
         display: "standalone",
         start_url: "/",
         icons: [
-          { src: "/sprinter.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" },
+          { src: "/sprinter.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+          { src: "/sprinter-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
         ],
       },
       workbox: {
