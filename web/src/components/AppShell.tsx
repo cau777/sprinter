@@ -111,8 +111,14 @@ function ConversationList({ online, onNavigate }: { online: boolean; onNavigate:
   const query = useQuery({ queryKey: ["chats"], queryFn: fetchChats });
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const rename = useMutation({ mutationFn: ({ id, title }: { id: string; title: string }) => updateChat(id, { title }), onSuccess: () => queryClient.invalidateQueries({ queryKey: ["chats"] }) });
-  const remove = useMutation({ mutationFn: (id: string) => deleteChat(id), onSuccess: (_, id) => { queryClient.invalidateQueries({ queryKey: ["chats"] }); queryClient.removeQueries({ queryKey: ["chat", id] }); if (window.location.pathname === `/${id}`) void navigate({ to: "/" }); } });
+  const rename = useMutation({ mutationFn: ({ id, title }: { id: string; title: string }) => {
+    if (!navigator.onLine) throw new Error("You’re offline. Reconnect to rename conversations.");
+    return updateChat(id, { title });
+  }, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["chats"] }) });
+  const remove = useMutation({ mutationFn: (id: string) => {
+    if (!navigator.onLine) throw new Error("You’re offline. Reconnect to delete conversations.");
+    return deleteChat(id);
+  }, onSuccess: (_, id) => { queryClient.invalidateQueries({ queryKey: ["chats"] }); queryClient.removeQueries({ queryKey: ["chat", id] }); if (window.location.pathname === `/${id}`) void navigate({ to: "/" }); } });
   const chats = query.data?.items ?? [];
   if (query.isLoading) return <div className="sidebar-empty"><span className="empty-dot" />Loading conversations…</div>;
   if (!chats.length) return <div className="sidebar-empty"><span className="empty-dot" />Your conversations will appear here.</div>;

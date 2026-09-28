@@ -26,7 +26,10 @@ export function SettingsPage() {
   }, [settingsQuery.data]);
 
   const save = useMutation({
-    mutationFn: (patch: Parameters<typeof updateSettings>[0]) => updateSettings(patch),
+    mutationFn: (patch: Parameters<typeof updateSettings>[0]) => {
+      if (!navigator.onLine) throw new Error("You’re offline. Reconnect to change settings.");
+      return updateSettings(patch);
+    },
     onSuccess: (settings, patch) => {
       queryClient.setQueryData(["settings"], settings);
       setError(undefined);
@@ -40,11 +43,17 @@ export function SettingsPage() {
     queryClient.clear();
     void clearingCache.finally(() => window.location.assign("/login"));
   };
-  const revokeOne = useMutation({ mutationFn: revokeSession, onSuccess: (_, id) => {
+  const revokeOne = useMutation({ mutationFn: (id: string) => {
+    if (!navigator.onLine) throw new Error("You’re offline. Reconnect to revoke sessions.");
+    return revokeSession(id);
+  }, onSuccess: (_, id) => {
     if (sessionsQuery.data?.some((session) => session.id === id && session.current)) logoutAfterRevocation();
     else void queryClient.invalidateQueries({ queryKey: ["sessions"] });
   }, onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke session.") });
-  const revokeEvery = useMutation({ mutationFn: revokeAllSessions, onSuccess: logoutAfterRevocation, onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke sessions.") });
+  const revokeEvery = useMutation({ mutationFn: () => {
+    if (!navigator.onLine) throw new Error("You’re offline. Reconnect to revoke sessions.");
+    return revokeAllSessions();
+  }, onSuccess: logoutAfterRevocation, onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke sessions.") });
 
   const settings = settingsQuery.data;
   const models = modelQuery.data?.items ?? [];
