@@ -473,7 +473,38 @@ async fn patch_settings_inner(
             plaintext_key.flatten().map(SecretString::from);
     }
 
+    let changed = values.keys().map(String::as_str).collect::<Vec<_>>();
+    if !changed.is_empty() {
+        let instructions = values
+            .get("custom_instructions")
+            .and_then(Value::as_str);
+        tracing::info!(
+            keys = ?changed,
+            default_model = ?values.get("default_model").and_then(Value::as_str),
+            title_model = ?values.get("title_model").and_then(Value::as_str),
+            favorite_models = ?values.get("favorite_models"),
+            pdf_engine = ?values.get("pdf_engine").and_then(Value::as_str),
+            upload_limits = ?values.get("upload_limits"),
+            key_set = values.get("openrouter_api_key").map(|value| {
+                value.as_str().is_some_and(|key| !key.trim().is_empty())
+            }),
+            instructions_chars = instructions.map(|text| text.chars().count()),
+            instructions_preview = instructions.map(|text| setting_preview(text, 200)),
+            "settings changed"
+        );
+    }
+
     get_settings_inner(state).await
+}
+
+fn setting_preview(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let preview = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
 }
 
 async fn get_models(

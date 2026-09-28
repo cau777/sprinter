@@ -33,6 +33,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, interval, timeout, timeout_at},
 };
+use tracing::Instrument;
 
 const GLOBAL_LIMIT: usize = 8;
 const FLUSH_EVERY: Duration = Duration::from_secs(1);
@@ -285,6 +286,13 @@ impl Manager {
         let manager = self.clone();
         let state = app.clone();
         let task_running = running.clone();
+        let generation_span = tracing::info_span!(
+            "generation",
+            gen = %assistant_id,
+            chat = %chat_id,
+            model = %prepared.model,
+            started_by = started_by.as_deref().unwrap_or("")
+        );
         let task = tokio::spawn(async move {
             manager
                 .run_generation(
@@ -297,6 +305,7 @@ impl Manager {
                     cancel_rx,
                     title_info,
                 )
+                .instrument(generation_span)
                 .await;
         });
         *running.task.lock().await = Some(task);
@@ -409,6 +418,16 @@ impl Manager {
         mut cancel_rx: watch::Receiver<Option<StopReason>>,
         title_info: Option<TitleInfo>,
     ) {
+        let generation_started = Instant::now();
+        tracing::info!(
+            gen = %assistant_id,
+            chat = %prepared.chat_id,
+            model = %prepared.model,
+            path_len = prepared.prompt.len(),
+            pdf_engine = prepared.pdf_engine.as_deref().unwrap_or(""),
+            started_by = started_by.as_deref().unwrap_or(""),
+            "started"
+        );
         let title_task = title_info.map(|info| {
             spawn_title_task(
                 self.client.clone(),
@@ -480,6 +499,7 @@ impl Manager {
                 let mut file_annotations = Vec::new();
                 let mut finished = false;
                 let mut was_cancelled = false;
+                let mut first_token = false;
                 loop {
                     tokio::select! {
                         changed = cancel_rx.changed() => {
@@ -491,6 +511,10 @@ impl Manager {
                         _ = ticker.tick() => self.flush(&assistant_id, &running).await,
                         event = stream.next() => match event {
                             Some(Ok(ProviderEvent::Delta(content))) => {
+                                if !content.is_empty() && !first_token {
+                                    first_token = true;
+                                    tracing::info!(ttft_ms = generation_started.elapsed().as_millis(), "first token");
+                                }
                                 let mut buffer = running.buffer.write().expect("generation buffer poisoned");
                                 buffer.content.push_str(&content);
                                 let _ = running.events.send(StreamEvent::Delta { content });
@@ -535,6 +559,7 @@ impl Manager {
                         final_reason,
                         final_usage,
                         &running,
+                        generation_started.elapsed().as_millis(),
                     )
                     .await;
                 }
@@ -577,6 +602,7 @@ impl Manager {
         finish_reason: Option<String>,
         usage: Option<ProviderUsage>,
         running: &Running,
+        duration_ms: u128,
     ) {
         let content = running
             .buffer
@@ -598,7 +624,23 @@ impl Manager {
         {
             tracing::error!(message_id = %id, error = %error, "could not persist completed generation");
         }
-        let _ = model;
+        let preview = log_preview(&content, 200);
+        let subscribers = running.events.receiver_count();
+        tracing::info!(
+            gen = %id,
+            model,
+            status = "complete",
+            finish = finish_reason.as_deref().unwrap_or(""),
+            duration_ms,
+            prompt_tokens = prompt.unwrap_or_default(),
+            completion_tokens = completion.unwrap_or_default(),
+            reasoning_tokens = reasoning.unwrap_or_default(),
+            cost = cost.unwrap_or_default(),
+            subscribers,
+            chars = content.chars().count(),
+            preview,
+            "completed"
+        );
         let event = StreamEvent::Done {
             status: "complete".into(),
             finish_reason,
@@ -695,6 +737,16 @@ impl Manager {
         let mut buffer = running.buffer.write().expect("generation buffer poisoned");
         buffer.terminal = Some(event.clone());
         let _ = running.events.send(event);
+    }
+}
+
+fn log_preview(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let preview = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
     }
 }
 

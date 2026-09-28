@@ -72,7 +72,7 @@ async fn request_id(mut request: Request, next: Next) -> Response {
     );
     let span = tracing::info_span!("request", rid = %request_id, method = %request.method(), path = %request.uri().path());
     let mut response = next.run(request).instrument(span).await;
-    tracing::debug!(
+    tracing::info!(
         status = response.status().as_u16(),
         latency_ms = started.elapsed().as_millis(),
         "completed"
