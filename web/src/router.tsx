@@ -16,6 +16,10 @@ const rootRoute = createRootRoute({
 
 const AssistantStoreSpike = lazy(() => import("./routes/AssistantStoreSpike").then((module) => ({ default: module.AssistantStoreSpike })));
 
+function isOfflineFailure(error: unknown) {
+  return !navigator.onLine || error instanceof TypeError;
+}
+
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
@@ -26,6 +30,7 @@ const appRoute = createRoute({
       if (error instanceof Error && "status" in error && error.status === 401) {
         throw redirect({ to: "/login", search: { redirect: `${location.pathname}${location.searchStr}` } });
       }
+      if (isOfflineFailure(error)) return;
       throw error;
     }
   },
@@ -45,7 +50,13 @@ const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
   beforeLoad: async () => {
-    const settings = await fetchSettings();
+    let settings: Awaited<ReturnType<typeof fetchSettings>>;
+    try {
+      settings = await fetchSettings();
+    } catch (error) {
+      if (isOfflineFailure(error)) return;
+      throw error;
+    }
     if (!settings.openrouter_api_key.set || !settings.default_model) throw redirect({ to: "/setup" });
   },
   component: EmptyChat,

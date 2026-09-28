@@ -7,18 +7,14 @@ import "./theme/app.css";
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClient } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
 import { ClientErrorBoundary, installGlobalErrorHandlers } from "./clientErrors";
 import { queryPersister } from "./api/queryPersistence";
+import { queryClient } from "./api/queryClient";
 
 installGlobalErrorHandlers();
-
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } },
-});
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

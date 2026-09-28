@@ -282,6 +282,9 @@ button { color: inherit; }
 
 /* Settings */
 .settings-page { width: min(100%, 850px); margin: 0 auto; padding: 31px 28px 50px; }
+.settings-readonly-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.settings-offline-note { margin-top: 12px; border: 1px solid var(--accent-line); border-radius: 8px; padding: 8px 10px; color: #a8cbd3; background: rgba(61,232,255,.035); font-size: 9px; }
+.setup-readonly-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .settings-heading { display: flex; align-items: center; gap: 13px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
 .settings-heading-icon,.settings-section-icon { display: grid; place-items: center; flex: 0 0 auto; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-line); }
 .settings-heading-icon { width: 39px; height: 39px; border-radius: 12px; }

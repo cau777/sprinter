@@ -5,8 +5,11 @@ import { ArrowDown, ArrowUp, Check, CreditCard, FileText, KeyRound, LogOut, Save
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSessions, fetchSettings, fetchUsage, revokeAllSessions, revokeSession, updateSettings } from "../api/settings";
 import { ModelPicker } from "../components/ModelPicker";
+import { useOnlineStatus } from "../api/useOnlineStatus";
+import { clearPersistedQueryCache } from "../api/queryPersistence";
 
 export function SettingsPage() {
+  const online = useOnlineStatus();
   const queryClient = useQueryClient();
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: fetchSettings });
   const modelQuery = useQuery({ queryKey: ["models"], queryFn: fetchModels, enabled: settingsQuery.data?.openrouter_api_key.set === true });
@@ -32,8 +35,16 @@ export function SettingsPage() {
     },
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not save settings."),
   });
-  const revokeOne = useMutation({ mutationFn: revokeSession, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }), onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke session.") });
-  const revokeEvery = useMutation({ mutationFn: revokeAllSessions, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }), onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke sessions.") });
+  const logoutAfterRevocation = () => {
+    const clearingCache = clearPersistedQueryCache().catch(() => undefined);
+    queryClient.clear();
+    void clearingCache.finally(() => window.location.assign("/login"));
+  };
+  const revokeOne = useMutation({ mutationFn: revokeSession, onSuccess: (_, id) => {
+    if (sessionsQuery.data?.some((session) => session.id === id && session.current)) logoutAfterRevocation();
+    else void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+  }, onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke session.") });
+  const revokeEvery = useMutation({ mutationFn: revokeAllSessions, onSuccess: logoutAfterRevocation, onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke sessions.") });
 
   const settings = settingsQuery.data;
   const models = modelQuery.data?.items ?? [];
@@ -58,9 +69,11 @@ export function SettingsPage() {
     <section className="settings-page">
       <header className="settings-heading"><div className="settings-heading-icon"><Settings2 size={18} /></div><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Settings</h1><p>Keep your workspace tuned to the way you think.</p></div></header>
       {settingsQuery.isLoading ? <div className="settings-loading">Loading settings…</div> : settingsQuery.isError ? <div className="settings-error" role="alert">{settingsQuery.error.message}</div> : <>
+        {!online && <div className="settings-offline-note" role="status">You’re offline. Settings are read-only until you reconnect.</div>}
         {error && <div className="settings-toast-error" role="alert">{error}</div>}
         {saved && <div className="settings-toast-success" role="status"><Check size={14} />{saved}</div>}
 
+        <fieldset disabled={!online} className="settings-readonly-fieldset">
         <section className="settings-section" aria-labelledby="provider-heading">
           <div className="settings-section-heading"><div className="settings-section-icon"><KeyRound size={16} /></div><div><h2 id="provider-heading">OpenRouter</h2><p>Your key connects Sprinter to model providers.</p></div></div>
           <div className="settings-card">
@@ -132,6 +145,7 @@ export function SettingsPage() {
             {!sessionsQuery.data?.length ? <p className="settings-empty-note">No active sessions.</p> : <ul className="settings-session-list">{sessionsQuery.data.map((session) => <li key={session.id}><span className="session-device">{session.user_agent || "Unknown device"}{session.current && <b>THIS DEVICE</b>}<small>{session.ip || "Unknown address"} · Signed in {dateTime(session.created_at)} · Last active {dateTime(session.last_seen_at)}</small></span><button type="button" disabled={revokeOne.isPending} onClick={() => revokeOne.mutate(session.id)}>{session.current ? "Log out" : "Revoke"}</button></li>)}</ul>}
           </div>}
         </section>
+        </fieldset>
       </>}
     </section>
   );

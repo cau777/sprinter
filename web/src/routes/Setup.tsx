@@ -6,8 +6,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings, updateSettings } from "../api/settings";
 import { ModelPicker } from "../components/ModelPicker";
+import { useOnlineStatus } from "../api/useOnlineStatus";
 
 export function Setup() {
+  const online = useOnlineStatus();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: fetchSettings });
@@ -18,7 +20,10 @@ export function Setup() {
   const modelsQuery = useQuery({ queryKey: ["models"], queryFn: fetchModels, enabled: settingsQuery.data?.openrouter_api_key.set === true });
 
   const saveKey = useMutation({
-    mutationFn: () => updateSettings({ openrouter_api_key: apiKey.trim() }),
+    mutationFn: () => {
+      if (!navigator.onLine) throw new Error("You’re offline. Reconnect to finish setup.");
+      return updateSettings({ openrouter_api_key: apiKey.trim() });
+    },
     onSuccess: (settings) => {
       queryClient.setQueryData(["settings"], settings);
       void queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -29,7 +34,10 @@ export function Setup() {
   });
 
   const saveModel = useMutation({
-    mutationFn: () => updateSettings({ default_model: model || settingsQuery.data?.default_model }),
+    mutationFn: () => {
+      if (!navigator.onLine) throw new Error("You’re offline. Reconnect to finish setup.");
+      return updateSettings({ default_model: model || settingsQuery.data?.default_model });
+    },
     onSuccess: (settings) => {
       queryClient.setQueryData(["settings"], settings);
       void navigate({ to: "/" });
@@ -44,6 +52,8 @@ export function Setup() {
       <div className="setup-card">
         <div className="setup-progress"><span className={step === 1 ? "is-current" : "is-complete"}>01</span><i /><span className={step === 2 ? "is-current" : ""}>02</span></div>
         <div className="setup-brand"><span className="brand-mark"><Sparkles size={16} /></span><span>SPRINTER SETUP</span></div>
+        {!online && <p className="settings-offline-note" role="status">You’re offline. Reconnect to finish setup.</p>}
+        <fieldset disabled={!online} className="setup-readonly-fieldset">
         {step === 1 ? <>
           <div className="setup-icon"><KeyRound size={20} /></div>
           <p className="login-eyebrow">CONNECT YOUR MODEL PROVIDER</p>
@@ -62,10 +72,11 @@ export function Setup() {
           <p className="login-eyebrow">MAKE THIS SPACE YOURS</p>
           <h1>Choose your default model.</h1>
           <p className="setup-copy">Pick the model Sprinter will use for new conversations. You can change it anytime.</p>
-          {modelsQuery.isLoading ? <div className="setup-loading">Loading available models…</div> : modelsQuery.isError ? <div className="setup-error" role="alert">{modelsQuery.error.message}</div> : <ModelPicker models={modelsQuery.data?.items ?? []} value={model || settingsQuery.data?.default_model || null} onChange={setModel} placeholder="Search available models…" />}
+          {modelsQuery.isLoading ? <div className="setup-loading">Loading available models…</div> : modelsQuery.isError ? <div className="setup-error" role="alert">{modelsQuery.error.message}</div> : <ModelPicker models={modelsQuery.data?.items ?? []} value={model || settingsQuery.data?.default_model || null} onChange={setModel} isDisabled={!online} placeholder="Search available models…" />}
           {error && <div className="setup-error" role="alert">{error}</div>}
           <div className="setup-footer-actions"><Button className="setup-back" variant="ghost" onPress={() => { setError(undefined); setStep(1); }}><ArrowLeft size={14} /> Back</Button><Button className="setup-primary" isDisabled={!model && !settingsQuery.data?.default_model || saveModel.isPending} onPress={() => { setError(undefined); saveModel.mutate(); }}>{saveModel.isPending ? "Saving…" : <>Finish setup <ArrowRight size={15} /></>}</Button></div>
         </>}
+        </fieldset>
       </div>
       <p className="setup-note">Your workspace. Your key. Your conversation.</p>
     </section>

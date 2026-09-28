@@ -6,6 +6,7 @@ import { CircleHelp, Command, LogOut, Menu, MessageSquarePlus, Pencil, Search, S
 import { apiRequest } from "../api/client";
 import { deleteChat, fetchChats, updateChat } from "../api/chats";
 import { clearPersistedQueryCache } from "../api/queryPersistence";
+import { useOnlineStatus } from "../api/useOnlineStatus";
 import { ChatExportMenu } from "./ChatExportMenu";
 import { SearchDialog } from "./SearchDialog";
 import { useRegisterSW } from "virtual:pwa-register/react";
@@ -13,7 +14,7 @@ import { useRegisterSW } from "virtual:pwa-register/react";
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [online, setOnline] = useState(() => navigator.onLine);
+  const online = useOnlineStatus();
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
   const navigate = useNavigate();
   const currentPath = useRouterState({ select: (state) => state.location.pathname });
@@ -22,9 +23,6 @@ export function AppShell() {
   const pageName = currentPath === "/settings" ? "Settings" : currentPath === "/setup" ? "Workspace setup" : currentPath === "/spike/assistant-ui" ? "Runtime lab" : currentChat?.title || (currentChat ? "Conversation" : currentPath === "/" ? "New conversation" : "Conversation");
 
   useEffect(() => {
-    const updateOnline = () => setOnline(navigator.onLine);
-    window.addEventListener("online", updateOnline);
-    window.addEventListener("offline", updateOnline);
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
       if (event.key.toLowerCase() === "k" && !event.shiftKey) {
@@ -36,23 +34,19 @@ export function AppShell() {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("online", updateOnline);
-      window.removeEventListener("offline", updateOnline);
-    };
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [navigate]);
 
   return (
     <main className="app-frame">
       <aside className="sidebar glass-panel desktop-sidebar">
-        <SidebarContents onNavigate={() => setDrawerOpen(false)} onSearch={() => setSearchOpen(true)} />
+        <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => setSearchOpen(true)} />
       </aside>
 
       {drawerOpen && <div className="mobile-drawer-scrim" onClick={() => setDrawerOpen(false)}>
         <aside className="sidebar glass-panel mobile-sidebar" onClick={(event) => event.stopPropagation()}>
           <Button isIconOnly className="drawer-close" variant="ghost" aria-label="Close navigation" onPress={() => setDrawerOpen(false)}><X size={17} /></Button>
-          <SidebarContents onNavigate={() => setDrawerOpen(false)} onSearch={() => { setDrawerOpen(false); setSearchOpen(true); }} />
+          <SidebarContents online={online} onNavigate={() => setDrawerOpen(false)} onSearch={() => { setDrawerOpen(false); setSearchOpen(true); }} />
         </aside>
       </div>}
 
@@ -76,12 +70,13 @@ export function AppShell() {
   );
 }
 
-function SidebarContents({ onNavigate, onSearch }: { onNavigate: () => void; onSearch: () => void }) {
+function SidebarContents({ online, onNavigate, onSearch }: { online: boolean; onNavigate: () => void; onSearch: () => void }) {
   const queryClient = useQueryClient();
   async function logout() {
     await apiRequest("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => undefined);
+    const clearingCache = clearPersistedQueryCache().catch(() => undefined);
     queryClient.clear();
-    await clearPersistedQueryCache().catch(() => undefined);
+    await clearingCache;
     window.location.assign("/login");
   }
 
@@ -100,7 +95,7 @@ function SidebarContents({ onNavigate, onSearch }: { onNavigate: () => void; onS
 
     <div className="sidebar-section">
       <div className="section-label">YOUR SPACE</div>
-      <ConversationList onNavigate={onNavigate} />
+      <ConversationList online={online} onNavigate={onNavigate} />
     </div>
 
     <div className="sidebar-bottom">
@@ -112,7 +107,7 @@ function SidebarContents({ onNavigate, onSearch }: { onNavigate: () => void; onS
   </>;
 }
 
-function ConversationList({ onNavigate }: { onNavigate: () => void }) {
+function ConversationList({ online, onNavigate }: { online: boolean; onNavigate: () => void }) {
   const query = useQuery({ queryKey: ["chats"], queryFn: fetchChats });
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -129,6 +124,6 @@ function ConversationList({ onNavigate }: { onNavigate: () => void }) {
   }
   return <div className="conversation-list">{["Today", "Previous 7 days", "Earlier"].map((group) => {
     const items = groups.get(group);
-    return items?.length ? <div className="conversation-group" key={group}><div className="conversation-group-heading">{group}</div>{items.map((chat) => <div key={chat.id} className="conversation-row"><Link to="/$chatId" params={{ chatId: chat.id }} className="conversation-link" onClick={onNavigate}>{chat.title || "New conversation"}</Link><div className="conversation-actions"><button type="button" aria-label={`Rename ${chat.title || "conversation"}`} onClick={() => { const title = window.prompt("Rename conversation", chat.title || ""); if (title?.trim()) rename.mutate({ id: chat.id, title: title.trim() }); }}><Pencil size={12} /></button><button type="button" aria-label={`Delete ${chat.title || "conversation"}`} onClick={() => { if (window.confirm("Delete this conversation?")) remove.mutate(chat.id); }}><Trash2 size={12} /></button></div></div>)}</div> : null;
+    return items?.length ? <div className="conversation-group" key={group}><div className="conversation-group-heading">{group}</div>{items.map((chat) => <div key={chat.id} className="conversation-row"><Link to="/$chatId" params={{ chatId: chat.id }} className="conversation-link" onClick={onNavigate}>{chat.title || "New conversation"}</Link><div className="conversation-actions"><button type="button" aria-label={`Rename ${chat.title || "conversation"}`} disabled={!online} onClick={() => { const title = window.prompt("Rename conversation", chat.title || ""); if (title?.trim()) rename.mutate({ id: chat.id, title: title.trim() }); }}><Pencil size={12} /></button><button type="button" aria-label={`Delete ${chat.title || "conversation"}`} disabled={!online} onClick={() => { if (window.confirm("Delete this conversation?")) remove.mutate(chat.id); }}><Trash2 size={12} /></button></div></div>)}</div> : null;
   })}</div>;
 }

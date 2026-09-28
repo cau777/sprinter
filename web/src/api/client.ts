@@ -1,3 +1,6 @@
+import { queryClient } from "./queryClient";
+import { clearPersistedQueryCache, enableQueryPersistence } from "./queryPersistence";
+
 export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string } };
 
 export class ApiError extends Error {
@@ -20,6 +23,11 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, option
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (["POST", "PATCH", "PUT", "DELETE"].includes(init.method?.toUpperCase() ?? "") && !headers.has("Content-Type")) headers.set("X-Sprinter", "1");
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
+  if (response.status === 401) {
+    const clearingCache = clearPersistedQueryCache().catch(() => undefined);
+    queryClient.clear();
+    await clearingCache;
+  }
   if (response.status === 401 && options.redirectOnUnauthorized !== false && !path.startsWith("/api/auth/login")) {
     const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.location.assign(`/login?redirect=${encodeURIComponent(returnTo)}`);
@@ -37,6 +45,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}, option
     throw new ApiError(response.status, body);
   }
   if (response.status === 204) return undefined as T;
+  if (path === "/api/auth/sessions" && (init.method ?? "GET").toUpperCase() === "GET") enableQueryPersistence();
   return (await response.json()) as T;
 }
 
