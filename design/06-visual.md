@@ -34,13 +34,16 @@ Defined once as CSS variables and mapped into the Tailwind and HeroUI theme conf
 | `--on-accent` | `#061018` | Text and icons on accent fills |
 | `--text` | `#d7deea` | Body text |
 | `--text-strong` | `#ffffff` | Titles, active items |
-| `--text-muted` | `#6b7690` | Metadata, placeholders, group labels |
+| `--text-muted` | `#8792a8` | Metadata, placeholders, group labels |
 | `--danger` | `#ff5d7a` | Errors, destructive actions |
 | `--warning` | `#ffc857` | Interrupted or cancelled generations, limits |
 | `--success` | `#4ade9a` | Confirmations |
 
 Semantic colors are separate from the accent. All text/background pairs must meet WCAG AA,
 so muted text is checked against `--surface`, not just `--bg`.
+The darker `#6b7690` candidate has only 3.78:1 contrast on `--surface` (`#141b2b`) and
+would fail WCAG AA for normal-sized text. `#8792a8` provides 5.49:1 contrast on that
+surface.
 
 ## Typography
 
