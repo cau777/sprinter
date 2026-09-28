@@ -75,22 +75,14 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
     let config = Arc::new(config);
     let app_state = state::AppState::new(pool, config.clone());
     let maintenance = tokio::spawn(operations::maintenance_loop(app_state.clone()));
-    let backups = tokio::spawn(operations::daily_snapshot_loop(
-        app_state.pool.clone(),
-        config.data_dir.clone(),
-        config.backup_keep,
-    ));
     let listener = TcpListener::bind(address).await?;
     info!(version = env!("CARGO_PKG_VERSION"), bind = %address,
         data_dir = %config.data_dir.display(), workers = config.worker_threads,
-        log_keep_days = config.log_keep_days, backup_keep = config.backup_keep,
+        log_keep_days = config.log_keep_days,
         insecure_cookies = config.insecure_cookies, openrouter_base_url = %config.openrouter_base_url,
         trusted_proxies = ?config.trusted_proxies,
         key_set = false, "starting");
     let generation_manager = app_state.generation.clone();
-    let pool = app_state.pool.clone();
-    let data_dir = config.data_dir.clone();
-    let backup_keep = config.backup_keep;
     let result = axum::serve(
         listener,
         web::router(app_state).into_make_service_with_connect_info::<SocketAddr>(),
@@ -101,12 +93,7 @@ async fn serve(config: config::Config) -> Result<(), Box<dyn Error>> {
     })
     .await;
     maintenance.abort();
-    backups.abort();
     let _ = maintenance.await;
-    let _ = backups.await;
-    if let Err(error) = operations::write_snapshot(&pool, &data_dir, backup_keep).await {
-        error!(error = %error, "snapshot failed");
-    }
     info!("stopped");
     result?;
     Ok(())

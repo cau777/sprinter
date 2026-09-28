@@ -23,7 +23,7 @@ crates/
       generation/             # manager: spawn, broadcast, flush, cancel, shutdown
       openrouter/             # client, SSE parsing, request builder
       uploads/                # streaming store, sniffing, GC
-      tasks.rs                # scheduler: GC, sessions, snapshots, model cache
+      tasks.rs                # scheduler: GC, sessions, and model cache
       logging.rs              # subscriber setup, file rotation, redaction helpers, previews
       web.rs                  # rust-embed, SPA fallback, cache + security headers
   fake-openrouter/            # lib + bin, scenarios (11-testing)
@@ -68,8 +68,8 @@ Build the skeleton and settle every open technical unknown before writing featur
   2. **HeroUI with Tailwind:** check which HeroUI version works with the current
      Tailwind major version, and that dark theme overrides work.
   3. **Static build:** a musl static binary with bundled SQLite (FTS5 confirmed working)
-     and mimalloc, in a `scratch` Dockerfile. Measure image size (target < 20 MB) and
-     idle RSS (target < 30 MB).
+     in the default release profile, in a `scratch` Dockerfile. Measure idle RSS
+     (target < 30 MB).
   4. **OpenRouter facts:** check against the current docs:
      - whether `usage: {include: true}` is needed to get `cost`
      - the endpoint and shape of the credits/balance response
@@ -203,14 +203,14 @@ This is the heart of the app. Branching is deliberately left for M4.
   lazy chunks, and a "Reload to update" toast that doesn't interrupt an open stream.
 - The offline read-only mode: TanStack Query persisted to IndexedDB, an offline banner
   with sending disabled, and the cache cleared on logout.
-- Daily `VACUUM INTO` snapshots and one at shutdown, with retention. The `healthcheck`
-  subcommand.
+- The `healthcheck` subcommand. Backups of the mounted `DATA_DIR` are handled by the
+  host, outside Sprinter.
 - The GitHub Actions workflow building amd64 and arm64 to GHCR on tags.
 - A README covering env vars, Caddy and nginx snippets (SSE buffering, body size), and
   backup and restore.
 - **E2E:** `pwa`. The full suite runs in under 60 s.
-- **Done when:** it's installed as a PWA on your phone, deployed behind your proxy
-  from a GHCR image, with backups appearing in `DATA_DIR/backups`.
+- **Done when:** it's installed as a PWA on your phone and deployed behind your proxy
+  from a GHCR image. Host-managed backups cover the database and uploads.
 
 ### M9: Polish (S–M)
 
@@ -218,7 +218,7 @@ This is the heart of the app. Branching is deliberately left for M4.
   checks, and safe areas on a real phone.
 - An accessibility pass: focus states, labels, and keyboard shortcuts.
 - A performance check: bundle size per route, idle and peak RSS against the targets in
-  [04-backend.md](04-backend.md), and image size.
+  [04-backend.md](04-backend.md).
 - Update any design docs that drifted during implementation.
 
 ## Dependency graph

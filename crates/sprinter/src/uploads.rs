@@ -884,7 +884,6 @@ mod tests {
                 data_dir: root.to_owned(),
                 bind_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
                 trusted_proxies: vec![],
-                backup_keep: 7,
                 worker_threads: 1,
                 log_filter: "off".to_owned(),
                 log_keep_days: 30,

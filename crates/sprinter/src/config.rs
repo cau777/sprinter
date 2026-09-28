@@ -15,7 +15,6 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub bind_address: SocketAddr,
     pub trusted_proxies: Vec<IpNet>,
-    pub backup_keep: usize,
     pub worker_threads: usize,
     pub log_filter: String,
     pub log_keep_days: usize,
@@ -63,15 +62,11 @@ impl Config {
             .collect::<Result<Vec<_>, _>>()?;
         let worker_threads = parse_or("WORKER_THREADS", 2_usize)?;
         let log_keep_days = parse_or("LOG_KEEP_DAYS", 30_usize)?;
-        let backup_keep = parse_or("BACKUP_KEEP", 7_usize)?;
         if worker_threads == 0 {
             return Err(Box::new(ConfigError::MustBePositive("WORKER_THREADS")));
         }
         if log_keep_days == 0 {
             return Err(Box::new(ConfigError::MustBePositive("LOG_KEEP_DAYS")));
-        }
-        if backup_keep == 0 {
-            return Err(Box::new(ConfigError::MustBePositive("BACKUP_KEEP")));
         }
 
         Ok(Self {
@@ -81,7 +76,6 @@ impl Config {
                 .unwrap_or_else(|| PathBuf::from("/var/lib/sprinter")),
             bind_address,
             trusted_proxies,
-            backup_keep,
             worker_threads,
             log_filter: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_owned()),
             log_keep_days,

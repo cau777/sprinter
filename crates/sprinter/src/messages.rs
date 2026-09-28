@@ -50,6 +50,11 @@ pub struct MessageAttachment {
     pub upload_id: String,
     #[ts(type = "number")]
     pub position: i64,
+    pub filename: String,
+    pub kind: String,
+    pub mime: String,
+    #[ts(type = "number")]
+    pub size: i64,
     pub pdf_engine: Option<String>,
     pub parse_cache: Option<String>,
 }
@@ -451,22 +456,28 @@ pub async fn get_chat_messages(
                 prompt_tokens, completion_tokens, reasoning_tokens, cost, created_at, updated_at \
          FROM messages WHERE chat_id = ? ORDER BY created_at, id",
     ).bind(chat_id).fetch_all(pool).await?;
-    let attachments = sqlx::query_as::<_, (String, String, i64, Option<String>, Option<String>)>(
-        "SELECT ma.message_id, ma.upload_id, ma.position, ma.pdf_engine, ma.parse_cache \
-         FROM message_attachments ma JOIN messages m ON m.id = ma.message_id \
+    let attachments = sqlx::query_as::<_, (String, String, i64, String, String, String, i64, Option<String>, Option<String>)>(
+        "SELECT ma.message_id, ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, ma.pdf_engine, ma.parse_cache \
+         FROM message_attachments ma JOIN messages m ON m.id = ma.message_id JOIN uploads u ON u.id = ma.upload_id \
          WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position",
     )
     .bind(chat_id)
     .fetch_all(pool)
     .await?;
     let mut by_message: HashMap<String, Vec<MessageAttachment>> = HashMap::new();
-    for (message_id, upload_id, position, pdf_engine, parse_cache) in attachments {
+    for (message_id, upload_id, position, filename, kind, mime, size, pdf_engine, parse_cache) in
+        attachments
+    {
         by_message
             .entry(message_id)
             .or_default()
             .push(MessageAttachment {
                 upload_id,
                 position,
+                filename,
+                kind,
+                mime,
+                size,
                 pdf_engine,
                 parse_cache,
             });
@@ -902,11 +913,19 @@ async fn get_message_tx(
     tx: &mut Transaction<'_, Sqlite>,
     id: &str,
 ) -> Result<Option<MessageRecord>, MessageError> {
-    Ok(sqlx::query_as::<_, MessageRecord>(
+    let mut message = sqlx::query_as::<_, MessageRecord>(
         "SELECT id, chat_id, parent_id, role, content, status, error, model, generation_id, finish_reason, \
                 prompt_tokens, completion_tokens, reasoning_tokens, cost, created_at, updated_at \
          FROM messages WHERE id = ?",
-    ).bind(id).fetch_optional(&mut **tx).await?)
+    ).bind(id).fetch_optional(&mut **tx).await?;
+    if let Some(message) = message.as_mut() {
+        message.attachments = sqlx::query_as::<_, MessageAttachment>(
+            "SELECT ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, ma.pdf_engine, ma.parse_cache \
+             FROM message_attachments ma JOIN uploads u ON u.id = ma.upload_id \
+             WHERE ma.message_id = ? ORDER BY ma.position",
+        ).bind(id).fetch_all(&mut **tx).await?;
+    }
+    Ok(message)
 }
 
 fn now_ms() -> i64 {

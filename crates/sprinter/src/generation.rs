@@ -1080,7 +1080,6 @@ mod tests {
             data_dir: PathBuf::from("/tmp/sprinter-generation-test"),
             bind_address: "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
             trusted_proxies: Vec::new(),
-            backup_keep: 7,
             worker_threads: 2,
             log_filter: "warn".into(),
             log_keep_days: 7,

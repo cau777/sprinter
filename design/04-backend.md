@@ -60,6 +60,6 @@ The canonical env var list and `DATA_DIR` layout are in
 One Tokio interval scheduler runs:
 - **Hourly:** upload GC and the `tmp/` sweep ([02-files.md](02-files.md)), and deleting
   expired sessions.
-- **Daily at 03:00 UTC, and at shutdown:** the `VACUUM INTO` DB snapshot and pruning old
-  snapshots ([08-deployment.md](08-deployment.md)).
+- **Backups:** managed by the host outside Sprinter. Back up the mounted `DATA_DIR`
+  consistently, including the SQLite database and uploads ([08-deployment.md](08-deployment.md)).
 - **Hourly:** refreshing the model list cache.

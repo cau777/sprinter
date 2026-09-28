@@ -1,7 +1,7 @@
 # Sprinter
 
 Sprinter is a self-hosted AI chat application. It serves the web app and API from one
-container and stores its SQLite database, uploads, backups, and logs under `DATA_DIR`.
+container and stores its SQLite database, uploads, and logs under `DATA_DIR`.
 OpenRouter is used for model discovery and chat completions; the API key is encrypted
 before it is stored.
 
@@ -84,11 +84,10 @@ Set these environment variables on the container:
 | Variable | Default | Purpose |
 |---|---|---|
 | `SPRINTER_PASSWORD` | Required | Master password used for login and key encryption. |
-| `DATA_DIR` | `/var/lib/sprinter` | Persistent database, uploads, snapshots, and logs. |
+| `DATA_DIR` | `/var/lib/sprinter` | Persistent database, uploads, and logs. |
 | `BIND` | `0.0.0.0` | Address the server listens on. |
 | `PORT` | `8080` | HTTP port inside the container. |
 | `TRUSTED_PROXIES` | Empty | Comma-separated proxy IPs or CIDRs allowed to supply forwarded client IPs. |
-| `BACKUP_KEEP` | `7` | Number of daily SQLite snapshots to retain. |
 | `WORKER_THREADS` | `2` | Tokio worker thread count. |
 | `RUST_LOG` | `info` | Log filter, for example `info,sprinter::generation=debug`. |
 | `LOG_KEEP_DAYS` | `30` | Number of daily log files to retain. |
@@ -101,30 +100,10 @@ unavailable.
 
 ## Backups and restore
 
-Sprinter writes a consistent SQLite snapshot at 03:00 UTC each day and after graceful
-shutdown. It uses `VACUUM INTO`, writes a temporary file, atomically renames it into
-`DATA_DIR/backups/`, and keeps the newest `BACKUP_KEEP` snapshots. The backup directory
-and snapshot files are restricted to the Sprinter user.
-
-Back up both `backups/` and `uploads/` from the persistent volume. The live
-`sprinter.db`, `sprinter.db-wal`, and `sprinter.db-shm` files do not need to be copied;
-logs are not part of the recommended backup set.
-
-To restore a snapshot from the host, stop Sprinter and copy it over the live database.
-For a named Docker volume, with the snapshot in the current directory:
-
-```sh
-docker stop sprinter
-docker run --rm \
-  -v sprinter-data:/data \
-  -v "$PWD:/restore:ro" \
-  alpine:3.21 \
-  sh -c 'cp /restore/sprinter-YYYY-MM-DD.db /data/sprinter.db && rm -f /data/sprinter.db-wal /data/sprinter.db-shm'
-docker start sprinter
-```
-
-Replace `sprinter-YYYY-MM-DD.db` with the snapshot you want. Keep the matching
-`uploads/` backup alongside the database snapshot when restoring attachments.
+Backups are managed by the host or deployment platform. Back up the mounted `DATA_DIR`
+with a method that captures the SQLite database consistently and includes `uploads/`.
+Sprinter does not create or retain database snapshots. Use the backup system's restore
+procedure with Sprinter stopped, restoring the database and its matching uploads.
 
 ## Operations
 

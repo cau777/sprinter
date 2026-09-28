@@ -22,7 +22,6 @@ browser (PWA) ──HTTPS──▶ reverse proxy (Caddy / Traefik / nginx / CF T
 - Architectures: **linux/amd64** and **linux/arm64**.
 - Built by GitHub Actions and published to GHCR (`ghcr.io/cau777/sprinter`), tagged with
   the semver and `latest`.
-- Target image size: under 20 MB.
 - The binary has a `healthcheck` subcommand, because `scratch` has no curl.
   `GET /healthz` is unauthenticated and returns 200 when the DB is reachable.
 
@@ -45,7 +44,6 @@ These go in the README with example Caddy and nginx snippets.
 | `DATA_DIR` | `/var/lib/sprinter` | Persistent state |
 | `BIND` / `PORT` | `0.0.0.0` / `8080` | Listen address |
 | `TRUSTED_PROXIES` | _(empty)_ | CIDRs whose `X-Forwarded-For` is trusted |
-| `BACKUP_KEEP` | `7` | Number of daily DB snapshots to keep |
 | `WORKER_THREADS` | `2` | Tokio worker threads |
 | `RUST_LOG` | `info` | Log level filter for the log files and stdout. See [13-logging.md](13-logging.md). |
 | `LOG_KEEP_DAYS` | `30` | Number of daily log files kept in `DATA_DIR/logs` |
@@ -54,30 +52,15 @@ These go in the README with example Caddy and nginx snippets.
 
 ## Backups
 
-The **host** backs up the mounted `DATA_DIR` (volume snapshots, restic, rsync, and so on).
-Sprinter makes sure a plain file copy of that directory is always consistent:
+The host or deployment platform owns backups of the mounted `DATA_DIR` (volume
+snapshots, restic, rsync, or another operator-selected system). Sprinter does not create
+database snapshots or schedule backups. The backup system must capture the SQLite
+database consistently and include `uploads/` so attachment references remain valid.
+Follow that system's documented restore procedure, with Sprinter stopped while replacing
+the live database and restoring its matching uploads.
 
-- A copy of a live SQLite DB in WAL mode can be torn. So once a day (and on graceful
-  shutdown), Sprinter writes a consistent snapshot with `VACUUM INTO` to
-  `DATA_DIR/backups/sprinter-YYYY-MM-DD.db` (written to a temp file, then renamed). It
-  keeps `BACKUP_KEEP` snapshots.
-- Uploads are content-addressed and immutable, and each is written through a temp file
-  and an atomic rename. That makes copying `uploads/` inherently safe.
-- **Recommended host backup set:** `backups/` and `uploads/`. The live `sprinter.db*`
-  files and `logs/` can be excluded.
-- **Restore:** stop the container, copy the chosen snapshot to `sprinter.db`, delete any
-  `sprinter.db-wal` and `-shm`, then start the container.
-
-`DATA_DIR` layout:
-
-```
-$DATA_DIR/
-  sprinter.db, sprinter.db-wal, sprinter.db-shm   # live DB
-  backups/sprinter-YYYY-MM-DD.db                  # consistent daily snapshots
-  uploads/ab/ab12…                                # content-addressed uploads
-  logs/sprinter.log.YYYY-MM-DD                    # daily text logs (13-logging)
-  tmp/                                            # in-progress uploads and snapshots
-```
+`DATA_DIR` contains the live SQLite database, content-addressed uploads, daily logs, and
+temporary upload files. The `tmp/` directory is only for in-progress uploads.
 
 ## Export (per chat)
 

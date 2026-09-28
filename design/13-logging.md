@@ -115,9 +115,9 @@ How this is enforced:
 
 | Level | Used for |
 |---|---|
-| **ERROR** | Something broke that shouldn't: DB or IO errors, a panicked task, a failed snapshot, an unreadable config, an internal error behind a 500. Always includes the error chain. |
+| **ERROR** | Something broke that shouldn't: DB or IO errors, a panicked task, an unreadable config, an internal error behind a 500. Always includes the error chain. |
 | **WARN** | Expected-but-notable failures: a provider error (401, 402, 429, 5xx, context too long), a failed login, a rate limit hit, a rejected upload (413, 415), a generation marked `interrupted`, a password-change rotation, an unreadable API key, a request slower than 2 s, and client-reported errors. |
-| **INFO** | Normal lifecycle: startup and shutdown, each completed API request, login and logout, chat create, rename and delete, message sent, generation start, first token, and completion, titles, uploads stored or deduped, settings changed (keys and non-secret values), branch switch, export, GC, snapshot, and model cache refresh results. |
+| **INFO** | Normal lifecycle: startup and shutdown, each completed API request, login and logout, chat create, rename and delete, message sent, generation start, first token, and completion, titles, uploads stored or deduped, settings changed (keys and non-secret values), branch switch, export, GC, and model cache refresh results. |
 | **DEBUG** | High volume or low value: static assets and `/healthz`, SSE subscribe and unsubscribe, DB flushes during streaming, OpenRouter request and response summaries, cache hits and misses, and session expiry refreshes. |
 | **TRACE** | Per-chunk streaming counters and SQL statements (through sqlx's own logging). Only for deep debugging. |
 
@@ -153,7 +153,6 @@ Fields listed are in addition to span context.
 | Search | `search` | query preview, results, duration_ms |
 | Usage | `usage viewed` (DEBUG) and `balance fetched` | balance, cache hit |
 | Tasks | `gc` | orphans removed, bytes freed, tmp files swept, sessions expired |
-| | `snapshot written` / `snapshot failed` (ERROR) | path, bytes, duration_ms, pruned |
 | | `models refreshed` / `models refresh failed` (WARN) | count, duration_ms |
 | Client | `client error` (WARN) | message, stack preview (first 500 characters), route, ua, app version |
 
