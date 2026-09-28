@@ -1,17 +1,20 @@
 import { useEffect, useState } from "react";
 import { Button } from "@heroui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Check, KeyRound, Save, Settings2, ShieldCheck, Star } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CreditCard, FileText, KeyRound, LogOut, Save, Settings2, ShieldCheck, Star } from "lucide-react";
 import { ApiError } from "../api/client";
-import { fetchModels, fetchSettings, updateSettings } from "../api/settings";
+import { fetchModels, fetchSessions, fetchSettings, fetchUsage, revokeAllSessions, revokeSession, updateSettings } from "../api/settings";
 import { ModelPicker } from "../components/ModelPicker";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: fetchSettings });
   const modelQuery = useQuery({ queryKey: ["models"], queryFn: fetchModels, enabled: settingsQuery.data?.openrouter_api_key.set === true });
+  const usageQuery = useQuery({ queryKey: ["usage"], queryFn: fetchUsage, staleTime: 60_000 });
+  const sessionsQuery = useQuery({ queryKey: ["sessions"], queryFn: fetchSessions });
   const [apiKey, setApiKey] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [uploadDraft, setUploadDraft] = useState<{ image_bytes: number; pdf_bytes: number; text_bytes: number; files_per_message: number; total_prompt_bytes: number }>();
   const [saved, setSaved] = useState<string>();
   const [error, setError] = useState<string>();
 
@@ -29,10 +32,13 @@ export function SettingsPage() {
     },
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not save settings."),
   });
+  const revokeOne = useMutation({ mutationFn: revokeSession, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }), onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke session.") });
+  const revokeEvery = useMutation({ mutationFn: revokeAllSessions, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }), onError: (cause) => setError(cause instanceof ApiError ? cause.message : "Could not revoke sessions.") });
 
   const settings = settingsQuery.data;
   const models = modelQuery.data?.items ?? [];
   const favoriteModels = settings?.favorite_models ?? [];
+  const uploadLimits = uploadDraft ?? settings?.upload_limits;
 
   function changeFavorites(next: string[]) {
     setSaved(undefined);
@@ -91,7 +97,55 @@ export function SettingsPage() {
             <div className="instructions-footer"><span>Sent as a private system instruction with each request.</span><Button className="settings-save-button" isDisabled={instructions === settings?.custom_instructions || save.isPending} onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ custom_instructions: instructions }); }}>{save.isPending ? "Saving…" : "Save instructions"}</Button></div>
           </div>
         </section>
+
+        <section className="settings-section" aria-labelledby="files-heading">
+          <div className="settings-section-heading"><div className="settings-section-icon"><FileText size={16} /></div><div><h2 id="files-heading">Files</h2><p>Choose how PDFs are parsed and set upload limits.</p></div></div>
+          <div className="settings-card settings-files-card">
+            <label className="settings-select-field"><span>PDF parsing engine</span><select value={settings?.pdf_engine ?? "cloudflare-ai"} disabled={save.isPending} onChange={(event) => { setSaved(undefined); setError(undefined); save.mutate({ pdf_engine: event.target.value }); }}><option value="cloudflare-ai">Cloudflare AI · free</option><option value="mistral-ocr">Mistral OCR</option><option value="native">Native</option></select><small>Applies to PDFs attached to new messages.</small></label>
+            {uploadLimits && <>
+              <div className="settings-limit-grid">
+                <LimitInput label="Images · MB per file" value={uploadLimits.image_bytes} scale={1024 * 1024} max={40} onChange={(n) => setUploadDraft({ ...uploadLimits, image_bytes: n })} />
+                <LimitInput label="PDFs · MB per file" value={uploadLimits.pdf_bytes} scale={1024 * 1024} max={100} onChange={(n) => setUploadDraft({ ...uploadLimits, pdf_bytes: n })} />
+                <LimitInput label="Text · MB per file" value={uploadLimits.text_bytes} scale={1024 * 1024} max={5} onChange={(n) => setUploadDraft({ ...uploadLimits, text_bytes: n })} />
+                <LimitInput label="Files per message" value={uploadLimits.files_per_message} scale={1} max={20} onChange={(n) => setUploadDraft({ ...uploadLimits, files_per_message: n })} />
+                <LimitInput label="Total prompt · MB" value={uploadLimits.total_prompt_bytes} scale={1024 * 1024} max={200} onChange={(n) => setUploadDraft({ ...uploadLimits, total_prompt_bytes: n })} />
+              </div>
+              <div className="settings-action-footer"><small>Server ceilings: images 40 MB, PDFs 100 MB, text 5 MB, 20 files, total 200 MB.</small><Button className="settings-save-button" isDisabled={!uploadDraft || save.isPending} onPress={() => { setSaved(undefined); setError(undefined); save.mutate({ upload_limits: uploadDraft }, { onSuccess: () => setUploadDraft(undefined) }); }}>{save.isPending ? "Saving…" : "Save upload limits"}</Button></div>
+            </>}
+          </div>
+        </section>
+
+        <section className="settings-section" aria-labelledby="usage-heading">
+          <div className="settings-section-heading"><div className="settings-section-icon"><CreditCard size={16} /></div><div><h2 id="usage-heading">Usage</h2><p>Provider balance and recorded model spend.</p></div></div>
+          {usageQuery.isLoading ? <div className="settings-card settings-empty-note">Loading usage…</div> : usageQuery.isError ? <div className="settings-card settings-error" role="alert">{usageQuery.error.message}</div> : usageQuery.data && <div className="settings-card settings-usage-card">
+            <div className="usage-topline"><div><span>OPENROUTER BALANCE</span><strong>{!settings?.openrouter_api_key.set ? "Set an API key to see your balance" : usageQuery.data.balance == null ? "Unavailable" : money(usageQuery.data.balance)}</strong></div><div className="usage-periods">{([["Today", usageQuery.data.totals.today], ["7 days", usageQuery.data.totals.d7], ["30 days", usageQuery.data.totals.d30], ["All time", usageQuery.data.totals.all]] as const).map(([label, total]) => <div key={label}><span>{label}</span><strong>{money(total.cost)}</strong><small>{tokens(total.prompt_tokens + total.completion_tokens)} tokens</small></div>)}</div></div>
+            <div className="usage-daily"><div><strong>Daily spend</strong><span>Last 30 days · local time</span></div><Sparkline values={usageQuery.data.daily.map((item) => item.cost)} /><div className="usage-chart-labels"><span>{usageQuery.data.daily[0]?.day ?? ""}</span><span>{usageQuery.data.daily.at(-1)?.day ?? ""}</span></div></div>
+            <div className="usage-breakdowns"><div><h3>By model</h3>{usageQuery.data.by_model.length ? <ul>{usageQuery.data.by_model.map((row) => <li key={row.model}><span>{row.model}<small>{tokens(row.prompt_tokens + row.completion_tokens)} tokens</small></span><strong>{money(row.cost)}</strong></li>)}</ul> : <p>No recorded model usage yet.</p>}</div><div><h3>By chat <small>Top 20</small></h3>{usageQuery.data.by_chat.length ? <ul>{usageQuery.data.by_chat.map((row) => <li key={row.chat_id}><span>{row.chat_title || "Untitled chat"}{row.title_cost > 0 && <small>Includes {money(row.title_cost)} title generation</small>}</span><strong>{money(row.cost)}</strong></li>)}</ul> : <p>No recorded chat usage yet.</p>}</div></div>
+            <p className="usage-footnote">Spend totals use recorded message costs. Messages without provider cost data may be omitted.</p>
+          </div>}
+        </section>
+
+        <section className="settings-section" aria-labelledby="sessions-heading">
+          <div className="settings-section-heading"><div className="settings-section-icon"><LogOut size={16} /></div><div><h2 id="sessions-heading">Active sessions</h2><p>Devices currently signed in to your workspace.</p></div></div>
+          {sessionsQuery.isLoading ? <div className="settings-card settings-empty-note">Loading sessions…</div> : sessionsQuery.isError ? <div className="settings-card settings-error" role="alert">{sessionsQuery.error.message}</div> : <div className="settings-card settings-sessions-card">
+            <div className="sessions-toolbar"><span>{sessionsQuery.data?.length ?? 0} active {(sessionsQuery.data?.length ?? 0) === 1 ? "session" : "sessions"}</span><button type="button" disabled={!sessionsQuery.data?.length || revokeEvery.isPending} onClick={() => revokeEvery.mutate()}>{revokeEvery.isPending ? "Logging out…" : "Log out all sessions"}</button></div>
+            {!sessionsQuery.data?.length ? <p className="settings-empty-note">No active sessions.</p> : <ul className="settings-session-list">{sessionsQuery.data.map((session) => <li key={session.id}><span className="session-device">{session.user_agent || "Unknown device"}{session.current && <b>THIS DEVICE</b>}<small>{session.ip || "Unknown address"} · Signed in {dateTime(session.created_at)} · Last active {dateTime(session.last_seen_at)}</small></span><button type="button" disabled={revokeOne.isPending} onClick={() => revokeOne.mutate(session.id)}>{session.current ? "Log out" : "Revoke"}</button></li>)}</ul>}
+          </div>}
+        </section>
       </>}
     </section>
   );
+}
+
+function LimitInput({ label, value, scale, max, onChange }: { label: string; value: number; scale: number; max: number; onChange: (value: number) => void }) {
+  const shown = value / scale;
+  return <label className="settings-limit-input"><span>{label}</span><input type="number" min={scale === 1 ? 1 : 0.01} max={max} step={scale === 1 ? 1 : 0.1} value={Number.isInteger(shown) ? shown : Number(shown.toFixed(2))} onChange={(event) => { const parsed = Number(event.target.value); if (Number.isFinite(parsed)) onChange(Math.round(parsed * scale)); }} /></label>;
+}
+function money(value: number) { return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value); }
+function tokens(value: number) { return new Intl.NumberFormat().format(value); }
+function dateTime(timestamp: number) { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(timestamp)); }
+function Sparkline({ values }: { values: number[] }) {
+  const max = Math.max(0, ...values);
+  const points = values.map((value, index) => `${values.length < 2 ? 0 : index / (values.length - 1) * 100},${max === 0 ? 28 : 28 - value / max * 24}`).join(" ");
+  return <svg className="usage-sparkline" viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label="Daily spend over the last 30 days"><polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" /></svg>;
 }
