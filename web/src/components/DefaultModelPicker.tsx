@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { fetchModels, fetchSettings, updateSettingsAndRefetchFavorites } from "../api/settings";
+import type { Settings, SettingsPatch } from "../api/settings";
 const ModelPicker = lazy(() => import("./ModelPicker").then((module) => ({ default: module.ModelPicker })));
 
 export function DefaultModelPicker({ isDisabled = false }: { isDisabled?: boolean }) {
@@ -9,11 +10,16 @@ export function DefaultModelPicker({ isDisabled = false }: { isDisabled?: boolea
   const settings = useQuery({ queryKey: ["settings"], queryFn: fetchSettings });
   const models = useQuery({ queryKey: ["models"], queryFn: fetchModels });
   const save = useMutation({
-    mutationFn: (patch: Parameters<typeof updateSettingsAndRefetchFavorites>[0]) => {
+    mutationFn: (variables: { patch: SettingsPatch; previous: Settings | undefined }) => {
       if (!navigator.onLine) throw new Error("You’re offline. Reconnect to change settings.");
-      return updateSettingsAndRefetchFavorites(patch);
+      return updateSettingsAndRefetchFavorites(variables.patch);
     },
-    onSuccess: (settings) => queryClient.setQueryData(["settings"], settings),
+    onError: (_error, variables) => {
+      if (variables.previous) queryClient.setQueryData(["settings"], variables.previous);
+    },
+    onSuccess: (updatedSettings) => {
+      queryClient.setQueryData<Settings>(["settings"], updatedSettings);
+    },
   });
 
   if (settings.isError || models.isError) return <span className="model-control-error" title="Could not load model settings"><AlertCircle size={12} /> Model unavailable</span>;
@@ -27,12 +33,14 @@ export function DefaultModelPicker({ isDisabled = false }: { isDisabled?: boolea
       favorites={current.favorite_models}
       isDisabled={isDisabled || save.isPending}
       placeholder="Choose a model"
-      onChange={(default_model) => save.mutate({ default_model })}
+      onChange={(default_model) => save.mutate({ patch: { default_model }, previous: undefined })}
       onToggleFavorite={(id) => {
-        const favorite_models = current.favorite_models.includes(id)
-          ? current.favorite_models.filter((item) => item !== id)
-          : [...current.favorite_models, id];
-        save.mutate({ favorite_models });
+        const previous = queryClient.getQueryData<Settings>(["settings"]) ?? current;
+        const favorite_models = previous.favorite_models.includes(id)
+          ? previous.favorite_models.filter((item) => item !== id)
+          : [...previous.favorite_models, id];
+        queryClient.setQueryData<Settings>(["settings"], { ...previous, favorite_models });
+        save.mutate({ patch: { favorite_models }, previous });
       }}
     /></Suspense>
     {save.isPending && <span className="model-saving">Saving…</span>}

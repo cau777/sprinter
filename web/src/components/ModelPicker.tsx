@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Autocomplete, Button, ListBox } from "@heroui/react";
 import { Check, ChevronDown, FileText, Image, Star } from "lucide-react";
 import type { ApiModel } from "../api/settings";
@@ -30,20 +30,18 @@ export function filterModels(models: ApiModel[], query: string) {
 export function ModelPicker({ models, value, favorites = [], onChange, onToggleFavorite, placeholder = "Choose a model", isDisabled, compact, className = "w-full" }: Props) {
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [favoriteIds, setFavoriteIds] = useState(favorites);
   const favoritePress = useRef(false);
-  useEffect(() => setFavoriteIds(favorites), [favorites]);
   function keepPickerOpen(event: { stopPropagation: () => void }) {
     event.stopPropagation();
     favoritePress.current = true;
     window.setTimeout(() => { favoritePress.current = false; }, 0);
   }
   const items = useMemo(() => [...models].sort((a, b) => {
-    const aFavorite = favoriteIds.indexOf(a.id);
-    const bFavorite = favoriteIds.indexOf(b.id);
+    const aFavorite = favorites.indexOf(a.id);
+    const bFavorite = favorites.indexOf(b.id);
     if (aFavorite >= 0 || bFavorite >= 0) return (aFavorite < 0 ? Number.MAX_SAFE_INTEGER : aFavorite) - (bFavorite < 0 ? Number.MAX_SAFE_INTEGER : bFavorite);
     return a.name.localeCompare(b.name);
-  }), [favoriteIds, models]);
+  }), [favorites, models]);
   const filteredItems = useMemo(() => filterModels(items, query), [items, query]);
   const selected = models.find((model) => model.id === value);
 
@@ -71,16 +69,19 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
           <div className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--panel-solid)] p-2">
             <input aria-label="Search models" className="h-9 w-full rounded-md border border-[var(--border)] bg-transparent px-2 text-xs text-[var(--text)] outline-none placeholder:text-slate-500 focus:border-[var(--accent-line)]" placeholder="Search models…" value={query} onChange={(event) => setQuery(event.target.value)} />
           </div>
-          <ListBox<ApiModel> className="p-1 outline-none" items={filteredItems}>
-            {(model) => <ListBox.Item key={model.id} id={model.id} textValue={`${model.id} ${model.name}`} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[var(--text)] outline-none data-[focused]:bg-[var(--accent-soft)] data-[selected]:bg-[var(--accent-soft)]">
-              <span className="grid min-w-0 flex-1 gap-0.5"><span className="text-[10px] font-semibold text-slate-200">{model.name}</span><span className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[9px] text-slate-500">{model.id}</span><span className="flex flex-wrap items-center gap-2 font-mono text-[8px] text-slate-500"><span>{(model.context_length / 1000).toFixed(0)}k context</span><span>In {moneyPerMillion(model.pricing.prompt)} / Out {moneyPerMillion(model.pricing.completion)} per 1M</span><span className="inline-flex items-center gap-1 text-cyan-300">{model.input_modalities.includes("image") ? <><Image size={11} /> image</> : null}{model.input_modalities.includes("file") || model.input_modalities.includes("pdf") ? <><FileText size={11} /> pdf</> : null}</span></span></span>
-              {onToggleFavorite && <Button isIconOnly variant="ghost" className="size-7 rounded-md p-1 text-amber-300" aria-label={`${favoriteIds.includes(model.id) ? "Remove" : "Add"} ${model.name} ${favoriteIds.includes(model.id) ? "from" : "to"} favorites`} onPointerDown={keepPickerOpen} onClick={keepPickerOpen} onPress={() => {
-                setFavoriteIds((current) => current.includes(model.id) ? current.filter((item) => item !== model.id) : [...current, model.id]);
-                onToggleFavorite(model.id);
-                setIsOpen(true);
-              }}><Star size={14} fill={favoriteIds.includes(model.id) ? "currentColor" : "none"} /></Button>}
-              {value === model.id && <Check className="shrink-0 text-[var(--accent)]" size={14} />}
-            </ListBox.Item>}
+          <ListBox<ApiModel> key={favorites.join("\u0000")} className="p-1 outline-none" items={filteredItems}>
+            {(model) => {
+              const isFavorite = favorites.includes(model.id);
+              return <ListBox.Item key={model.id} id={model.id} textValue={`${model.id} ${model.name}`} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[var(--text)] outline-none data-[focused]:bg-[var(--accent-soft)] data-[selected]:bg-[var(--accent-soft)]">
+                <span className="grid min-w-0 flex-1 gap-0.5"><span className="text-[10px] font-semibold text-slate-200">{model.name}</span><span className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[9px] text-slate-500">{model.id}</span><span className="flex flex-wrap items-center gap-2 font-mono text-[8px] text-slate-500"><span>{(model.context_length / 1000).toFixed(0)}k context</span><span>In {moneyPerMillion(model.pricing.prompt)} / Out {moneyPerMillion(model.pricing.completion)} per 1M</span><span className="inline-flex items-center gap-1 text-cyan-300">{model.input_modalities.includes("image") ? <><Image size={11} /> image</> : null}{model.input_modalities.includes("file") || model.input_modalities.includes("pdf") ? <><FileText size={11} /> pdf</> : null}</span></span></span>
+                {onToggleFavorite && <Button isIconOnly variant="ghost" className="size-7 rounded-md p-1 text-amber-300" aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${isFavorite ? "from" : "to"} favorites`} onPointerDownCapture={keepPickerOpen} onPointerUpCapture={keepPickerOpen} onClickCapture={(event) => {
+                  keepPickerOpen(event);
+                  onToggleFavorite(model.id);
+                  setIsOpen(true);
+                }}><Star size={14} fill={isFavorite ? "currentColor" : "none"} /></Button>}
+                {value === model.id && <Check className="shrink-0 text-[var(--accent)]" size={14} />}
+              </ListBox.Item>;
+            }}
           </ListBox>
         </div>
       </Autocomplete.Popover>
