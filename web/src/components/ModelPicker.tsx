@@ -115,18 +115,18 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
                   const isFavorite = favorites.includes(model.id);
                   const isSelected = value === model.id;
                   return <li key={model.id} className={`flex items-center gap-2 rounded-lg border-b border-[var(--border)] px-2 py-1 last:border-0 ${isSelected ? "bg-[var(--accent-soft)]" : "hover:bg-white/[.025]"}`}>
-                    <Button variant="ghost" className="flex min-w-0 flex-1 items-center justify-start gap-2 py-2 text-left" aria-pressed={isSelected} onPress={() => { onChange(model.id); setIsOpen(false); setQuery(""); }}>
+                    <button type="button" className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]" aria-pressed={isSelected} onClick={() => { onChange(model.id); setIsOpen(false); setQuery(""); }}>
                       <span className="grid min-w-0 flex-1 gap-1 text-left">
-                        <span className="flex items-center gap-2 text-[11px] font-semibold text-slate-100">{model.name}{isSelected && <span className="text-[9px] font-normal text-[var(--accent)]">Current model</span>}</span>
-                        <span className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[9px] text-slate-500">{model.id}</span>
-                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] text-slate-400">
+                        <span className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-slate-100"><span className="truncate">{model.name}</span>{isSelected && <span className="shrink-0 text-[9px] font-normal text-[var(--accent)]">Current model</span>}</span>
+                        <span className="truncate font-mono text-[9px] text-slate-500">{model.id}</span>
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] leading-4 text-slate-400">
                           <span>{(model.context_length / 1000).toFixed(0)}k context</span>
                           <span>In {moneyPerMillion(model.pricing.prompt)} / Out {moneyPerMillion(model.pricing.completion)} per 1M</span>
                           <span className="inline-flex items-center gap-1 text-cyan-300">{model.input_modalities.includes("image") && <><Image size={11} /> image</>}{(model.input_modalities.includes("file") || model.input_modalities.includes("pdf")) && <><FileText size={11} /> pdf</>}</span>
                         </span>
                       </span>
                       {isSelected && <Check className="shrink-0 text-[var(--accent)]" size={15} />}
-                    </Button>
+                    </button>
                     {onToggleFavorite && <Button isIconOnly variant="ghost" className="size-8 shrink-0 rounded-md text-amber-300" aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${isFavorite ? "from" : "to"} favorites`} onPress={() => onToggleFavorite(model.id)}><Star size={15} fill={isFavorite ? "currentColor" : "none"} /></Button>}
                   </li>;
                 })}
