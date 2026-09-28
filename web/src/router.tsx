@@ -83,9 +83,13 @@ const spikeRoute = createRoute({
 const chatRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/$chatId",
+  validateSearch: (search: Record<string, unknown>) => ({
+    messageId: typeof search.messageId === "string" ? search.messageId : undefined,
+  }),
   component: function ChatRoute() {
     const { chatId } = chatRoute.useParams();
-    return <Suspense fallback={<div className="route-loading">Opening conversation…</div>}><ChatPage chatId={chatId} /></Suspense>;
+    const { messageId } = chatRoute.useSearch();
+    return <Suspense fallback={<div className="route-loading">Opening conversation…</div>}><ChatPage chatId={chatId} messageId={messageId} /></Suspense>;
   },
 });
 

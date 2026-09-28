@@ -215,6 +215,7 @@ button { color: inherit; }
 .chat-search-result-title { color: #dce5f2; font-size: 11px; font-weight: 600; }
 .chat-search-result-snippet { overflow: hidden; color: #8996ab; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .chat-search-footer { display: flex; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border); color: #69768c; font-size: 8px; }
+.chat-message[data-search-target="true"] { border-radius: 10px; outline: 1px solid rgba(61,232,255,.48); background: rgba(61,232,255,.07); box-shadow: 0 0 24px rgba(61,232,255,.1); transition: background-color 2.4s ease, outline-color 2.4s ease, box-shadow 2.4s ease; }
 .chat-export-menu { position: relative; color: #8794a9; font-size: 10px; }
 .chat-export-menu summary { padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; list-style: none; cursor: pointer; }
 .chat-export-menu summary::-webkit-details-marker { display: none; }

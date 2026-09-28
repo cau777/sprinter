@@ -37,9 +37,9 @@ export function SearchDialog({ open, onClose }: Props) {
     staleTime: 0,
   });
 
-  function openResult(chatId: string) {
+  function openResult(chatId: string, messageId: string | null) {
     onClose();
-    void navigate({ to: "/$chatId", params: { chatId } });
+    void navigate({ to: "/$chatId", params: { chatId }, search: { messageId: messageId ?? undefined } });
   }
 
   return <dialog
@@ -63,13 +63,13 @@ export function SearchDialog({ open, onClose }: Props) {
         {!query.trim() ? <p className="chat-search-hint">Search across your messages and conversation titles.</p>
           : debounced !== query.trim() || results.isLoading ? <p className="chat-search-hint">Searching…</p>
           : results.isError ? <p className="chat-search-error" role="alert">{results.error.message}</p>
-          : results.data?.length ? results.data.map((result, index) => <button type="button" className="chat-search-result" key={`${result.chat_id}:${result.message_id ?? "title"}:${index}`} onClick={() => openResult(result.chat_id)}>
+          : results.data?.length ? results.data.map((result, index) => <button type="button" className="chat-search-result" key={`${result.chat_id}:${result.message_id ?? "title"}:${index}`} onClick={() => openResult(result.chat_id, result.message_id)}>
               <span className="chat-search-result-title">{result.chat_title || "Untitled conversation"}</span>
               <span className="chat-search-result-snippet">{result.snippet}</span>
             </button>)
           : <p className="chat-search-hint">No matching conversations.</p>}
       </div>
-      <div className="chat-search-footer"><span>Results open the matching conversation.</span><span><kbd>⌘ K</kbd> to open</span></div>
+      <div className="chat-search-footer"><span>Message results jump to the match.</span><span><kbd>⌘ K</kbd> to open</span></div>
     </div>
   </dialog>;
 }

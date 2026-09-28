@@ -22,7 +22,7 @@ import { MarkdownText } from "./MarkdownText";
 import { deleteUpload, uploadFile, type UploadRecord } from "../api/uploads";
 import { useOnlineStatus } from "../api/useOnlineStatus";
 
-type Props = { chatId?: string };
+type Props = { chatId?: string; messageId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
 type SendResult = { chatId: string; chat?: ChatSummary; user_message: ChatMessage; assistant_message: ChatMessage };
 type PendingUpload = { key: string; filename?: string; record?: UploadRecord | ChatMessage["attachments"][number]; progress: number; error?: string; uploading: boolean; persisted?: boolean };
@@ -61,7 +61,7 @@ function applyMessageEvent(queryClient: ReturnType<typeof useQueryClient>, chatI
   });
 }
 
-export function ChatInterface({ chatId }: Props) {
+export function ChatInterface({ chatId, messageId }: Props) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const online = useOnlineStatus();
@@ -82,6 +82,8 @@ export function ChatInterface({ chatId }: Props) {
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [pdfEngine, setPdfEngine] = useState("");
   const [fileError, setFileError] = useState<string>();
+  const [searchHighlight, setSearchHighlight] = useState<string | null>(null);
+  const handledSearchTarget = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const detail = chatQuery.data;
   const canSendImages = (modelQuery.data?.items.find((model) => model.id === (detail?.model ?? settingsQuery.data?.default_model))?.input_modalities ?? []).some((modality) => modality.toLowerCase() === "image");
@@ -211,6 +213,42 @@ export function ChatInterface({ chatId }: Props) {
     onError: (error) => setDraftError(error instanceof ApiError ? error.message : "Could not switch branches."),
   });
 
+  useEffect(() => {
+    if (!chatId || !messageId || !detail) return;
+    const targetKey = `${chatId}:${messageId}`;
+    if (handledSearchTarget.current === targetKey) return;
+    const target = detail.messages.find((message) => message.id === messageId);
+    if (!target) {
+      handledSearchTarget.current = targetKey;
+      return;
+    }
+    const path = visiblePath(detail.messages, detail.current_leaf_id);
+    if (path.some((message) => message.id === messageId)) {
+      handledSearchTarget.current = targetKey;
+      return;
+    }
+    if (!online) return;
+
+    handledSearchTarget.current = targetKey;
+    void switchBranch(chatId, messageId).then(({ current_leaf_id }) => {
+      queryClient.setQueryData<ChatDetail>(["chat", chatId], (current) => current ? { ...current, current_leaf_id } : current);
+    }).catch((error: unknown) => {
+      handledSearchTarget.current = null;
+      setDraftError(error instanceof ApiError ? error.message : "Could not open the matching message branch.");
+    });
+  }, [chatId, detail, messageId, online, queryClient]);
+
+  useEffect(() => {
+    if (!chatId || !messageId || !visibleMessages.some((message) => message.id === messageId)) return;
+    const element = document.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+    if (!element) return;
+    setSearchHighlight(messageId);
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    element.focus({ preventScroll: true });
+    const timeout = window.setTimeout(() => setSearchHighlight((current) => current === messageId ? null : current), 2400);
+    return () => window.clearTimeout(timeout);
+  }, [chatId, messageId, visibleMessages]);
+
   const messageList: RuntimeMessage[] = visibleMessages.map((message) => ({
     id: message.id,
     parentId: message.parent_id,
@@ -269,7 +307,7 @@ export function ChatInterface({ chatId }: Props) {
             const branchIndex = siblings.findIndex((candidate) => candidate.id === message.id);
             const user = message.role === "user";
             const editing = user && message.composer.isEditing;
-            return <MessagePrimitive.Root key={message.id} className="chat-message" data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
+            return <MessagePrimitive.Root key={message.id} className="chat-message" data-message-id={message.id} data-search-target={searchHighlight === message.id ? "true" : undefined} tabIndex={searchHighlight === message.id ? -1 : undefined} data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
               <div className="chat-message-role">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
               {editing ? <ComposerPrimitive.Root className="composer-card chat-composer chat-edit-composer">
                 <ComposerPrimitive.Input aria-label="Message" placeholder="Edit message…" rows={2} disabled={!online} />
