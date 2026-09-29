@@ -20,7 +20,7 @@ CREATE TABLE settings (
 );
 -- Keys: password_hash (Argon2id PHC string, 05-auth), openrouter_api_key
 --   (JSON {salt, nonce, ciphertext, hint, readable}, 07-settings), default_model,
---   title_model, favorite_models (JSON array), custom_instructions, pdf_engine,
+--   title_model, favorite_models (JSON array), custom_instructions,
 --   upload_limits (JSON)
 
 CREATE TABLE sessions (
@@ -35,6 +35,7 @@ CREATE TABLE sessions (
 
 CREATE TABLE chats (
   id               TEXT PRIMARY KEY,
+  session_id       TEXT,                  -- random 128-bit hex; set at creation or on first generation for legacy chats
   title            TEXT,                  -- NULL until the auto title arrives
   title_source     TEXT NOT NULL DEFAULT 'auto' CHECK (title_source IN ('auto','manual')),
   model            TEXT NOT NULL,         -- model used for the next generation in this chat
@@ -67,22 +68,24 @@ CREATE INDEX messages_chat   ON messages(chat_id, created_at);
 CREATE INDEX messages_parent ON messages(parent_id, created_at);
 
 CREATE TABLE uploads (
-  id          TEXT PRIMARY KEY,
-  sha256      TEXT NOT NULL,              -- file lives at uploads/<sha[0..2]>/<sha>
-  filename    TEXT NOT NULL,
-  mime        TEXT NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('image','pdf','text')),
-  size        INTEGER NOT NULL,
-  created_at  INTEGER NOT NULL
+  id                TEXT PRIMARY KEY,
+  sha256            TEXT NOT NULL,        -- file lives at uploads/<sha[0..2]>/<sha>
+  filename          TEXT NOT NULL,
+  mime              TEXT NOT NULL,
+  kind              TEXT NOT NULL CHECK (kind IN ('image','pdf','text')),
+  size              INTEGER NOT NULL,
+  created_at        INTEGER NOT NULL,
+  text_chars        INTEGER,              -- extracted PDF text length; NULL until extraction is stored
+  text_pages        INTEGER,
+  text_empty_pages  INTEGER,
+  text_extractor    TEXT                  -- extractor version, for future re-extraction
 );
 CREATE INDEX uploads_sha ON uploads(sha256);
 
 CREATE TABLE message_attachments (
   message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   upload_id    TEXT NOT NULL REFERENCES uploads(id),
-  position     INTEGER NOT NULL,
-  pdf_engine   TEXT,                      -- PDFs only: 'cloudflare-ai' | 'mistral-ocr' | 'native'
-  parse_cache  TEXT,                      -- OpenRouter PDF annotation JSON
+  position     INTEGER NOT NULL CHECK (position >= 0),
   PRIMARY KEY (message_id, upload_id)
 );
 CREATE INDEX message_attachments_upload ON message_attachments(upload_id);
