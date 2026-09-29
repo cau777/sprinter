@@ -25,7 +25,6 @@ pub enum ProviderEvent {
         provider: Option<String>,
         generation_id: Option<String>,
     },
-    Annotations(Value),
     Done {
         finish_reason: Option<String>,
         usage: Option<ProviderUsage>,
@@ -63,7 +62,7 @@ impl OpenRouterClient {
         key: &SecretString,
         model: &str,
         messages: &[ChatMessage],
-        pdf_engine: Option<&str>,
+        native_pdf_fallback: bool,
     ) -> Result<ProviderStream, ProviderError> {
         let response = self
             .http
@@ -71,7 +70,7 @@ impl OpenRouterClient {
             .bearer_auth(key.expose_secret())
             .header("HTTP-Referer", "https://github.com/cau777/sprinter")
             .header("X-Title", "Sprinter")
-            .json(&request_body(model, messages, true, pdf_engine))
+            .json(&request_body(model, messages, true, native_pdf_fallback))
             .send()
             .await
             .map_err(|_| ProviderError {
@@ -136,15 +135,6 @@ impl OpenRouterClient {
                                 };
                             }
                         }
-                        if let Some(annotations) = choice
-                            .and_then(|c| c.pointer("/message/annotations").or_else(|| c.pointer("/delta/annotations")))
-                        {
-                            if let Some(items) = annotations.as_array() {
-                                for item in items { yield ProviderEvent::Annotations(item.clone()); }
-                            } else {
-                                yield ProviderEvent::Annotations(annotations.clone());
-                            }
-                        }
                         if let Some(usage) = value.get("usage") {
                             final_usage = parse_usage(usage);
                         }
@@ -186,7 +176,7 @@ impl OpenRouterClient {
             .bearer_auth(key.expose_secret())
             .header("HTTP-Referer", "https://github.com/cau777/sprinter")
             .header("X-Title", "Sprinter")
-            .json(&request_body(model, &messages, false, None))
+            .json(&request_body(model, &messages, false, false))
             .send()
             .await
             .map_err(|_| ProviderError {
@@ -219,11 +209,11 @@ fn request_body(
     model: &str,
     messages: &[ChatMessage],
     stream: bool,
-    pdf_engine: Option<&str>,
+    native_pdf_fallback: bool,
 ) -> Value {
     let mut plugins = vec![json!({"id":"context-compression", "enabled":false})];
-    if let Some(engine) = pdf_engine {
-        plugins.push(json!({"id":"file-parser", "pdf":{"engine":engine}}));
+    if native_pdf_fallback {
+        plugins.push(json!({"id":"file-parser", "pdf":{"engine":"native"}}));
     }
     let mut body = json!({
         "model": model,
@@ -313,7 +303,7 @@ mod tests {
                 &SecretString::from("test-key"),
                 "test/text",
                 &messages,
-                Some("cloudflare-ai"),
+                true,
             )
             .await
             .unwrap();
@@ -323,7 +313,6 @@ mod tests {
         while let Some(event) = stream.next().await {
             match event.unwrap() {
                 ProviderEvent::Delta { content, .. } => deltas.push_str(&content),
-                ProviderEvent::Annotations(_) => {}
                 ProviderEvent::Done { usage, .. } => {
                     cost = usage.and_then(|usage| usage.cost);
                     finished = true;
@@ -342,7 +331,8 @@ mod tests {
         assert_eq!(request.body["reasoning"]["exclude"], true);
         assert_eq!(request.body["plugins"][0]["id"], "context-compression");
         assert_eq!(request.body["plugins"][0]["enabled"], false);
-        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "cloudflare-ai");
+        assert_eq!(request.body["plugins"][1]["id"], "file-parser");
+        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "native");
         assert_eq!(
             request.headers.get("http-referer").map(String::as_str),
             Some("https://github.com/cau777/sprinter")
@@ -368,7 +358,7 @@ mod tests {
                 &SecretString::from("test-key"),
                 "test/text",
                 &messages,
-                None,
+                false,
             )
             .await
             .unwrap();
@@ -387,7 +377,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pdf_content_part_is_sent_and_stream_annotations_are_emitted() {
+    async fn pdf_content_part_pins_native_file_parser() {
         let fake = FakeOpenRouter::new();
         let requests = fake.clone();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -405,25 +395,20 @@ mod tests {
                 &SecretString::from("test-key"),
                 "test/text",
                 &messages,
-                Some("cloudflare-ai"),
+                true,
             )
             .await
             .unwrap();
-        let mut annotations = Vec::new();
         while let Some(event) = stream.next().await {
-            if let ProviderEvent::Annotations(annotation) = event.unwrap() {
-                annotations.push(annotation);
-            }
+            event.unwrap();
         }
-        assert_eq!(annotations.len(), 1);
-        assert_eq!(annotations[0]["file"]["name"], "scan.pdf");
         let request = requests
             .requests_snapshot()
             .into_iter()
             .find(|request| request.path == "/api/v1/chat/completions")
             .unwrap();
         assert_eq!(request.body["messages"][0]["content"][0]["type"], "file");
-        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "cloudflare-ai");
+        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "native");
         server.abort();
     }
 }

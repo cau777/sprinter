@@ -419,15 +419,6 @@ impl Manager {
         title_info: Option<TitleInfo>,
     ) {
         let generation_started = Instant::now();
-        tracing::info!(
-            gen = %assistant_id,
-            chat = %prepared.chat_id,
-            model = %prepared.model,
-            path_len = prepared.prompt.len(),
-            pdf_engine = prepared.pdf_engine.as_deref().unwrap_or(""),
-            started_by = started_by.as_deref().unwrap_or(""),
-            "started"
-        );
         let title_task = title_info.map(|info| {
             spawn_title_task(
                 self.client.clone(),
@@ -442,11 +433,15 @@ impl Manager {
         let image_support = settings::model_supports_images(&app, &prepared.model)
             .await
             .unwrap_or(false);
+        let file_support = settings::model_supports_files(&app, &prepared.model)
+            .await
+            .unwrap_or(false);
         let expansion = crate::uploads::expand_prompt(
             &self.pool,
             &app.config.data_dir,
             &prepared.prompt,
             image_support,
+            file_support,
             limits.total_prompt_bytes,
         )
         .await;
@@ -456,18 +451,20 @@ impl Manager {
                     .await;
                 None
             }
-            Ok((expanded, needs_pdf_parser)) => {
-                let messages = prompt_for_provider(instructions.as_deref(), &expanded);
-                let pdf_engine = if needs_pdf_parser {
-                    Some(match prepared.pdf_engine.clone() {
-                        Some(engine) => engine,
-                        None => settings::default_pdf_engine(&app)
-                            .await
-                            .unwrap_or_else(|_| "cloudflare-ai".into()),
-                    })
-                } else {
-                    None
-                };
+            Ok(expanded) => {
+                tracing::info!(
+                    gen = %assistant_id,
+                    chat = %prepared.chat_id,
+                    model = %prepared.model,
+                    path_len = prepared.prompt.len(),
+                    pdf_text = expanded.pdf_text,
+                    pdf_native = expanded.pdf_native,
+                    pdf_omitted = expanded.pdf_omitted,
+                    started_by = started_by.as_deref().unwrap_or(""),
+                    "started"
+                );
+                let messages = prompt_for_provider(instructions.as_deref(), &expanded.messages);
+                let native_pdf_fallback = expanded.needs_native_pdf_plugin();
                 tokio::select! {
                     changed = cancel_rx.changed() => {
                         if changed.is_ok() && cancel_rx.borrow().is_some() {
@@ -478,10 +475,10 @@ impl Manager {
                             }
                             None
                         } else {
-                            Some(self.client.stream_chat(&key, &prepared.model, &messages, pdf_engine.as_deref()).await)
+                            Some(self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback).await)
                         }
                     }
-                    result = self.client.stream_chat(&key, &prepared.model, &messages, pdf_engine.as_deref()) => Some(result)
+                    result = self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback) => Some(result)
                 }
             }
         };
@@ -496,7 +493,6 @@ impl Manager {
                 ticker.tick().await;
                 let mut final_reason = None;
                 let mut final_usage = None;
-                let mut file_annotations = Vec::new();
                 let mut finished = false;
                 let mut was_cancelled = false;
                 let mut first_token = false;
@@ -524,7 +520,6 @@ impl Manager {
                                 buffer.content.push_str(&content);
                                 let _ = running.events.send(StreamEvent::Delta { content });
                             }
-                            Some(Ok(ProviderEvent::Annotations(annotation))) => file_annotations.push(annotation),
                             Some(Ok(ProviderEvent::Done { finish_reason, usage })) => {
                                 final_reason = finish_reason;
                                 final_usage = usage;
@@ -547,17 +542,6 @@ impl Manager {
                 } else if was_cancelled {
                     self.finish_cancelled(&assistant_id, &running).await;
                 } else if finished {
-                    if !file_annotations.is_empty() {
-                        if let Err(error) = crate::uploads::cache_pdf_annotations(
-                            &self.pool,
-                            &prepared.prompt,
-                            &file_annotations,
-                        )
-                        .await
-                        {
-                            tracing::warn!(%error, "could not cache parsed PDF annotations");
-                        }
-                    }
                     self.finish_complete(
                         &assistant_id,
                         &prepared.model,
@@ -1034,7 +1018,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pdf_upload_reaches_provider_and_streamed_annotations_are_cached() {
+    async fn scanned_pdf_uses_native_fallback_only_for_file_capable_models() {
         let (state, fake, server) = test_state().await;
         tokio::fs::create_dir_all(&state.config.data_dir)
             .await
@@ -1049,15 +1033,19 @@ mod tests {
         )
         .await
         .unwrap();
+        sqlx::query("UPDATE uploads SET text_chars = 0, text_pages = 1, text_empty_pages = 1, text_extractor = 'pdfjs-test' WHERE id = ?")
+            .bind(&upload.id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
         let prepared = messages::send_new_chat(
             &state.pool,
-            Some("test/text"),
+            Some("test/file"),
             SendMessageRequest {
                 parent_id: None,
                 content: "summarize this".into(),
                 attachment_ids: vec![upload.id.clone()],
                 model: None,
-                pdf_engine: None,
             },
         )
         .await
@@ -1102,14 +1090,8 @@ mod tests {
                 .unwrap()
                 .starts_with("data:application/pdf;base64,")
         );
-        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "cloudflare-ai");
-        let cache: Option<String> =
-            sqlx::query_scalar("SELECT parse_cache FROM message_attachments WHERE upload_id = ?")
-                .bind(&upload.id)
-                .fetch_one(&state.pool)
-                .await
-                .unwrap();
-        assert!(cache.unwrap().contains("Parsed scan.pdf"));
+        assert_eq!(request.body["plugins"][1]["id"], "file-parser");
+        assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "native");
         server.abort();
         state.pool.close().await;
     }
@@ -1202,7 +1184,6 @@ mod tests {
                 content: content.into(),
                 attachment_ids: Vec::new(),
                 model: None,
-                pdf_engine: None,
             },
         )
         .await

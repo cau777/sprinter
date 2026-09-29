@@ -1,6 +1,7 @@
 # JavaScript / Vite
 node_modules/
 web/dist/
+web/public/pdfjs/
 web/.vite/
 *.tsbuildinfo
 

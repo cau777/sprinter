@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error as ThisError;
@@ -55,21 +55,26 @@ pub struct MessageAttachment {
     pub mime: String,
     #[ts(type = "number")]
     pub size: i64,
-    pub pdf_engine: Option<String>,
-    pub parse_cache: Option<String>,
+    #[ts(type = "number | null")]
+    pub text_chars: Option<i64>,
+    #[ts(type = "number | null")]
+    pub text_pages: Option<i64>,
+    #[ts(type = "number | null")]
+    pub text_empty_pages: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SendMessageRequest {
     pub parent_id: Option<String>,
     pub content: String,
     #[serde(default)]
     pub attachment_ids: Vec<String>,
     pub model: Option<String>,
-    pub pdf_engine: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegenerateRequest {
     pub model: Option<String>,
 }
@@ -97,7 +102,6 @@ pub struct PreparedGeneration {
     pub assistant_message: MessageRecord,
     pub model: String,
     pub prompt: Vec<PromptMessage>,
-    pub pdf_engine: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -292,6 +296,7 @@ struct MessageApiError {
     code: &'static str,
     message: &'static str,
     request_id: String,
+    extra: Option<serde_json::Value>,
 }
 
 impl MessageApiError {
@@ -306,6 +311,7 @@ impl MessageApiError {
             code,
             message,
             request_id: auth::request_id(headers),
+            extra: None,
         }
     }
 
@@ -362,12 +368,16 @@ impl MessageApiError {
                 "attachments_too_large",
                 "Attachments in this prompt exceed the configured limit",
             ),
-            MessageError::InvalidPdfEngine => Self::new(
-                headers,
-                StatusCode::BAD_REQUEST,
-                "invalid_pdf_engine",
-                "The PDF parser engine is invalid",
-            ),
+            MessageError::PdfTextMissing(upload_ids) => {
+                let mut error = Self::new(
+                    headers,
+                    StatusCode::CONFLICT,
+                    "pdf_text_missing",
+                    "Text has not been extracted from one or more attached PDFs",
+                );
+                error.extra = Some(serde_json::json!({"upload_ids": upload_ids}));
+                error
+            }
             MessageError::GenerationInProgress => Self::new(
                 headers,
                 StatusCode::CONFLICT,
@@ -411,11 +421,18 @@ impl MessageApiError {
 
 impl IntoResponse for MessageApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({"error":{"code":self.code,"message":self.message,"request_id":self.request_id}})),
-        )
-            .into_response()
+        let mut error = serde_json::json!({
+            "code": self.code,
+            "message": self.message,
+            "request_id": self.request_id,
+        });
+        if let Some(extra) = self.extra.and_then(|value| value.as_object().cloned()) {
+            error
+                .as_object_mut()
+                .expect("error is an object")
+                .extend(extra);
+        }
+        (self.status, Json(serde_json::json!({"error": error}))).into_response()
     }
 }
 
@@ -437,8 +454,8 @@ pub enum MessageError {
     TooManyAttachments,
     #[error("attachments exceed the prompt size limit")]
     PromptTooLarge,
-    #[error("PDF parser engine is invalid")]
-    InvalidPdfEngine,
+    #[error("text has not been extracted from one or more attached PDFs")]
+    PdfTextMissing(Vec<String>),
     #[error("a generation is already active in this chat")]
     GenerationInProgress,
     #[error("default model is not configured")]
@@ -456,8 +473,8 @@ pub async fn get_chat_messages(
                 prompt_tokens, completion_tokens, reasoning_tokens, cost, created_at, updated_at \
          FROM messages WHERE chat_id = ? ORDER BY created_at, id",
     ).bind(chat_id).fetch_all(pool).await?;
-    let attachments = sqlx::query_as::<_, (String, String, i64, String, String, String, i64, Option<String>, Option<String>)>(
-        "SELECT ma.message_id, ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, ma.pdf_engine, ma.parse_cache \
+    let attachments = sqlx::query_as::<_, (String, String, i64, String, String, String, i64, Option<i64>, Option<i64>, Option<i64>)>(
+        "SELECT ma.message_id, ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, u.text_chars, u.text_pages, u.text_empty_pages \
          FROM message_attachments ma JOIN messages m ON m.id = ma.message_id JOIN uploads u ON u.id = ma.upload_id \
          WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position",
     )
@@ -465,8 +482,18 @@ pub async fn get_chat_messages(
     .fetch_all(pool)
     .await?;
     let mut by_message: HashMap<String, Vec<MessageAttachment>> = HashMap::new();
-    for (message_id, upload_id, position, filename, kind, mime, size, pdf_engine, parse_cache) in
-        attachments
+    for (
+        message_id,
+        upload_id,
+        position,
+        filename,
+        kind,
+        mime,
+        size,
+        text_chars,
+        text_pages,
+        text_empty_pages,
+    ) in attachments
     {
         by_message
             .entry(message_id)
@@ -478,8 +505,9 @@ pub async fn get_chat_messages(
                 kind,
                 mime,
                 size,
-                pdf_engine,
-                parse_cache,
+                text_chars,
+                text_pages,
+                text_empty_pages,
             });
     }
     for message in &mut messages {
@@ -574,6 +602,7 @@ pub async fn regenerate(
     let assistant_id = Uuid::now_v7().to_string();
     let now = now_ms();
     let prompt = prompt_path(&mut tx, &original.1, parent_id.as_deref()).await?;
+    ensure_pdf_text(&mut tx, &prompt, &[]).await?;
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, model, created_at, updated_at) \
          VALUES(?, ?, ?, 'assistant', '', 'streaming', ?, ?, ?)",
@@ -597,7 +626,6 @@ pub async fn regenerate(
         assistant_message: assistant,
         model,
         prompt,
-        pdf_engine: None,
     })
 }
 
@@ -643,33 +671,27 @@ async fn insert_exchange(
     request: SendMessageRequest,
     model: String,
 ) -> Result<PreparedGeneration, MessageError> {
-    if request
-        .pdf_engine
-        .as_deref()
-        .is_some_and(|engine| !matches!(engine, "cloudflare-ai" | "mistral-ocr" | "native"))
-    {
-        return Err(MessageError::InvalidPdfEngine);
-    }
     let now = now_ms();
     let user_id = Uuid::now_v7().to_string();
     let assistant_id = Uuid::now_v7().to_string();
     let previous_leaf_id = current_leaf(tx, chat_id).await?;
     let prompt = prompt_path(tx, chat_id, request.parent_id.as_deref()).await?;
-    let attachment_kinds = validate_attachments(tx, &prompt, &request.attachment_ids).await?;
-    let stored_pdf_engine = request
-        .pdf_engine
-        .clone()
-        .or(read_default_pdf_engine(tx).await?);
+    validate_attachments(tx, &prompt, &request.attachment_ids).await?;
+    ensure_pdf_text(tx, &prompt, &request.attachment_ids).await?;
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, created_at, updated_at) \
          VALUES(?, ?, ?, 'user', ?, 'complete', ?, ?)",
     ).bind(&user_id).bind(chat_id).bind(&request.parent_id).bind(&request.content).bind(now).bind(now)
         .execute(&mut **tx).await?;
     for (position, upload_id) in request.attachment_ids.iter().enumerate() {
-        sqlx::query("INSERT INTO message_attachments(message_id, upload_id, position, pdf_engine) VALUES(?, ?, ?, ?)")
-            .bind(&user_id).bind(upload_id).bind(position as i64)
-            .bind(if attachment_kinds.get(upload_id).map(String::as_str) == Some("pdf") { stored_pdf_engine.as_deref() } else { None })
-            .execute(&mut **tx).await?;
+        sqlx::query(
+            "INSERT INTO message_attachments(message_id, upload_id, position) VALUES(?, ?, ?)",
+        )
+        .bind(&user_id)
+        .bind(upload_id)
+        .bind(position as i64)
+        .execute(&mut **tx)
+        .await?;
     }
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, model, created_at, updated_at) \
@@ -703,7 +725,6 @@ async fn insert_exchange(
         assistant_message,
         model,
         prompt,
-        pdf_engine: request.pdf_engine,
     })
 }
 
@@ -762,14 +783,40 @@ async fn validate_attachments(
     Ok(kinds)
 }
 
-async fn read_default_pdf_engine(
+async fn ensure_pdf_text(
     tx: &mut Transaction<'_, Sqlite>,
-) -> Result<Option<String>, MessageError> {
-    let raw: Option<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'pdf_engine'")
+    prompt: &[PromptMessage],
+    new_ids: &[String],
+) -> Result<(), MessageError> {
+    let mut seen = HashSet::new();
+    let mut missing = Vec::new();
+    for id in prompt
+        .iter()
+        .flat_map(|message| message.attachment_ids.iter())
+        .chain(new_ids)
+    {
+        if !seen.insert(id.as_str()) {
+            continue;
+        }
+        let (kind, text_chars, text_pages, text_empty_pages) =
+            sqlx::query_as::<_, (String, Option<i64>, Option<i64>, Option<i64>)>(
+                "SELECT kind, text_chars, text_pages, text_empty_pages FROM uploads WHERE id = ?",
+            )
+            .bind(id)
             .fetch_optional(&mut **tx)
-            .await?;
-    Ok(raw.and_then(|value| serde_json::from_str(&value).ok()))
+            .await?
+            .ok_or(MessageError::InvalidAttachments)?;
+        if kind == "pdf"
+            && (text_chars.is_none() || text_pages.is_none() || text_empty_pages.is_none())
+        {
+            missing.push(id.clone());
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(MessageError::PdfTextMissing(missing))
+    }
 }
 
 async fn current_leaf(
@@ -920,7 +967,7 @@ async fn get_message_tx(
     ).bind(id).fetch_optional(&mut **tx).await?;
     if let Some(message) = message.as_mut() {
         message.attachments = sqlx::query_as::<_, MessageAttachment>(
-            "SELECT ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, ma.pdf_engine, ma.parse_cache \
+            "SELECT ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, u.text_chars, u.text_pages, u.text_empty_pages \
              FROM message_attachments ma JOIN uploads u ON u.id = ma.upload_id \
              WHERE ma.message_id = ? ORDER BY ma.position",
         ).bind(id).fetch_all(&mut **tx).await?;
@@ -937,9 +984,40 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SendMessageRequest, regenerate, send_new_chat, send_to_chat, switch_branch};
+    use super::{
+        MessageApiError, MessageError, SendMessageRequest, regenerate, send_new_chat, send_to_chat,
+        switch_branch,
+    };
     use crate::db;
+    use axum::{
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+    };
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+
+    #[test]
+    fn removed_pdf_engine_is_rejected_and_missing_text_error_lists_uploads() {
+        assert!(
+            serde_json::from_value::<SendMessageRequest>(serde_json::json!({
+                "parent_id": null,
+                "content": "read this",
+                "pdf_engine": "native"
+            }))
+            .is_err()
+        );
+
+        let error = MessageApiError::from_message(
+            MessageError::PdfTextMissing(vec!["upload-1".into(), "upload-2".into()]),
+            &HeaderMap::new(),
+        );
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert_eq!(
+            error.extra.as_ref().unwrap()["upload_ids"],
+            serde_json::json!(["upload-1", "upload-2"])
+        );
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
 
     #[tokio::test]
     async fn edits_regeneration_and_switch_preserve_the_message_tree_and_prompt_path() {
@@ -1023,7 +1101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_validates_attachment_limits_and_records_the_effective_pdf_engine() {
+    async fn send_validates_attachment_limits_and_requires_extracted_pdf_text() {
         let pool = test_pool().await;
         let limits = serde_json::json!({
             "image_bytes": 1024, "pdf_bytes": 1024, "text_bytes": 1024,
@@ -1034,13 +1112,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO settings(key, value, updated_at) VALUES('pdf_engine', ?, 1)")
-            .bind(serde_json::to_string("mistral-ocr").unwrap())
-            .execute(&pool)
-            .await
-            .unwrap();
         for (id, filename) in [("upload-one", "one.pdf"), ("upload-two", "two.pdf")] {
-            sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at) VALUES(?, ?, ?, 'application/pdf', 'pdf', 100, 1)")
+            sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at, text_chars, text_pages, text_empty_pages) VALUES(?, ?, ?, 'application/pdf', 'pdf', 100, 1, 40, 1, 0)")
                 .bind(id).bind(id.repeat(32)).bind(filename).execute(&pool).await.unwrap();
         }
         let mut invalid = request(None, "hi");
@@ -1063,13 +1136,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(prepared.prompt[0].attachment_ids, ["upload-one"]);
-        let engine: Option<String> = sqlx::query_scalar(
-            "SELECT pdf_engine FROM message_attachments WHERE upload_id = 'upload-one'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(engine.as_deref(), Some("mistral-ocr"));
+        assert_eq!(
+            prepared.user_message.as_ref().unwrap().attachments[0].text_chars,
+            Some(40)
+        );
+
+        sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at) VALUES('old-pdf', 'old-pdf-hash', 'old.pdf', 'application/pdf', 'pdf', 100, 1)")
+            .execute(&pool).await.unwrap();
+        let mut missing_text = request(None, "read this");
+        missing_text.attachment_ids.push("old-pdf".into());
+        assert!(matches!(
+            send_new_chat(&pool, Some("test/chat"), missing_text).await,
+            Err(super::MessageError::PdfTextMissing(ids)) if ids == ["old-pdf"]
+        ));
 
         let oversized = request(None, &"x".repeat(256 * 1024 + 1));
         assert!(matches!(
@@ -1085,7 +1164,6 @@ mod tests {
             content: content.to_owned(),
             attachment_ids: Vec::new(),
             model: None,
-            pdf_engine: None,
         }
     }
 

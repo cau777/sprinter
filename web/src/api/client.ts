@@ -1,12 +1,13 @@
 import { queryClient } from "./queryClient";
 import { clearPersistedQueryCache, enableQueryPersistence } from "./queryPersistence";
 
-export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string } };
+export type ApiErrorBody = { error?: { code?: string; message?: string; request_id?: string; upload_ids?: string[] } };
 
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly requestId?: string;
+  readonly uploadIds: string[];
 
   constructor(status: number, body: ApiErrorBody) {
     const message = body.error?.message ?? `Request failed (${status})`;
@@ -15,6 +16,7 @@ export class ApiError extends Error {
     this.status = status;
     this.code = body.error?.code;
     this.requestId = body.error?.request_id;
+    this.uploadIds = body.error?.upload_ids ?? [];
   }
 }
 

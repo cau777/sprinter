@@ -92,9 +92,10 @@ pub async fn serve(addr: SocketAddr) -> std::io::Result<()> {
 async fn models(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json<Value> {
     state.record("GET", "/api/v1/models", &headers, Value::Null);
     Json(json!({"data": [
-        model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false),
-        model("test/vision", "Fake Vision", 65536, "0.000003", "0.000006", true),
-        model("test/title", "Fake Title", 8192, "0.0000001", "0.0000002", false)
+        model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false, false),
+        model("test/vision", "Fake Vision", 65536, "0.000003", "0.000006", true, false),
+        model("test/file", "Fake PDF", 32768, "0.000001", "0.000002", false, true),
+        model("test/title", "Fake Title", 8192, "0.0000001", "0.0000002", false, false)
     ]}))
 }
 
@@ -105,10 +106,14 @@ fn model(
     prompt: &str,
     completion: &str,
     vision: bool,
+    files: bool,
 ) -> Value {
     let mut input_modalities = vec!["text"];
     if vision {
         input_modalities.push("image");
+    }
+    if files {
+        input_modalities.push("file");
     }
     json!({
         "id": id,
@@ -272,34 +277,14 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
             "choices":[{"index":0,"delta":{"content":part},"finish_reason":null}]
         }))));
     }
-    let annotations = pdf_annotations(body);
-    let mut final_chunk = json!({
+    let final_chunk = json!({
         "id":"fake-completion", "object":"chat.completion.chunk", "created":now_secs(), "model":model_name(body),
         "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
         "usage":{"prompt_tokens":12,"completion_tokens":parts.len() as u64,"total_tokens":12 + parts.len() as u64,"cost":0.0003}
     });
-    if !annotations.is_empty() {
-        final_chunk["choices"][0]["message"] = json!({"annotations":annotations});
-    }
     out.push((interval, sse_data(final_chunk)));
     out.push((Duration::ZERO, Event::default().data("[DONE]")));
     out
-}
-
-fn pdf_annotations(body: &Value) -> Vec<Value> {
-    body.get("messages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|message| message.get("content").and_then(Value::as_array))
-        .flatten()
-        .filter(|part| part.get("type").and_then(Value::as_str) == Some("file"))
-        .filter_map(|part| part.pointer("/file/filename").and_then(Value::as_str))
-        .map(|name| json!({
-            "type":"file",
-            "file":{"hash":format!("fake-{name}"),"name":name,"content":[{"type":"text","text":format!("Parsed {name}")}]}
-        }))
-        .collect()
 }
 
 fn split_reply(reply: &str, max_chunks: usize) -> Vec<String> {

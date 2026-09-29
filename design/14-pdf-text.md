@@ -1,6 +1,6 @@
 # 14: PDF text extraction in the browser
 
-Status: **Proposed**
+Status: **Implemented**
 
 PDFs are turned into text **in the browser, with pdf.js**, when they're attached. The
 server stores the original PDF as it does today, plus the extracted text. Prompts carry the

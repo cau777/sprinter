@@ -39,17 +39,17 @@ export const fetchChat = async (id: string): Promise<ChatDetail> => {
 export const updateChat = (id: string, patch: { title?: string; model?: string }) =>
   apiRequest<ChatSummary>(`/api/chats/${encodeURIComponent(id)}`, { method: "PATCH", body: jsonBody(patch) });
 export const deleteChat = (id: string) => apiRequest<void>(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
-export const sendToNewChat = async (content: string, model?: string, attachmentIds: string[] = [], pdfEngine?: string): Promise<NewChatResponse> => {
+export const sendToNewChat = async (content: string, model?: string, attachmentIds: string[] = []): Promise<NewChatResponse> => {
   const result = await apiRequest<NewChatMessageResponse>("/api/chats/new/messages", {
   method: "POST",
-  body: jsonBody({ parent_id: null, content, attachment_ids: attachmentIds, ...(model ? { model } : {}), ...(pdfEngine ? { pdf_engine: pdfEngine } : {}) }),
+  body: jsonBody({ parent_id: null, content, attachment_ids: attachmentIds, ...(model ? { model } : {}) }),
   });
   return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
 };
-export const sendToChat = async (id: string, parent_id: string | null, content: string, model?: string, attachmentIds: string[] = [], pdfEngine?: string): Promise<ExistingChatResponse> => {
+export const sendToChat = async (id: string, parent_id: string | null, content: string, model?: string, attachmentIds: string[] = []): Promise<ExistingChatResponse> => {
   const result = await apiRequest<SendMessageResponse>(`/api/chats/${encodeURIComponent(id)}/messages`, {
   method: "POST",
-  body: jsonBody({ parent_id, content, attachment_ids: attachmentIds, ...(model ? { model } : {}), ...(pdfEngine ? { pdf_engine: pdfEngine } : {}) }),
+  body: jsonBody({ parent_id, content, attachment_ids: attachmentIds, ...(model ? { model } : {}) }),
   });
   return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
 };

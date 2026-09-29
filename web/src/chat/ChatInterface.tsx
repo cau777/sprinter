@@ -16,17 +16,19 @@ import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings } from "../api/settings";
 import { DefaultModelPicker } from "../components/DefaultModelPicker";
-import { SelectField } from "../components/SelectField";
 import { siblingsFor, visiblePath } from "./branch";
 import { MarkdownText } from "./MarkdownText";
-import { deleteUpload, uploadFile, type UploadRecord } from "../api/uploads";
+import { deleteUpload, fetchPdfFile, storePdfText, uploadFile, type PdfTextStats, type UploadRecord } from "../api/uploads";
+import { extractPdfText, isPasswordProtectedPdfError, type ExtractedPdfText, pdfExtractionErrorMessage } from "../pdf/extractText";
+import { reportClientError } from "../clientErrors";
 import { useOnlineStatus } from "../api/useOnlineStatus";
 import { Button } from "@heroui/react";
+import { SelectField } from "../components/SelectField";
 
 type Props = { chatId?: string; messageId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
 type SendResult = { chatId: string; chat?: ChatSummary; user_message: ChatMessage; assistant_message: ChatMessage };
-type PendingUpload = { key: string; filename?: string; record?: UploadRecord | ChatMessage["attachments"][number]; progress: number; error?: string; uploading: boolean; persisted?: boolean };
+type PendingUpload = { key: string; filename?: string; record?: UploadRecord | ChatMessage["attachments"][number]; progress: number; error?: string; uploading: boolean; persisted?: boolean; extracting?: boolean; pageProgress?: { page: number; pages: number }; extractedText?: ExtractedPdfText };
 
 function textOf(message: AppendMessage) {
   return message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
@@ -74,13 +76,14 @@ export function ChatInterface({ chatId, messageId }: Props) {
   const [retryModels, setRetryModels] = useState<Record<string, string>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
-  const [pdfEngine, setPdfEngine] = useState("");
   const [fileError, setFileError] = useState<string>();
   const [searchHighlight, setSearchHighlight] = useState<string | null>(null);
   const handledSearchTarget = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const detail = chatQuery.data;
-  const canSendImages = (modelQuery.data?.items.find((model) => model.id === (detail?.model ?? settingsQuery.data?.default_model))?.input_modalities ?? []).some((modality) => modality.toLowerCase() === "image");
+  const activeModel = modelQuery.data?.items.find((model) => model.id === (detail?.model ?? settingsQuery.data?.default_model));
+  const canSendImages = (activeModel?.input_modalities ?? []).some((modality) => modality.toLowerCase() === "image");
+  const canReadPdfs = (activeModel?.input_modalities ?? []).some((modality) => ["file", "pdf"].includes(modality.toLowerCase()));
 
   useEffect(() => {
     const media = window.matchMedia("(pointer: coarse)");
@@ -117,13 +120,71 @@ export function ChatInterface({ chatId, messageId }: Props) {
         continue;
       }
       const localKey = crypto.randomUUID();
-      setPendingUploads((current) => [...current, { key: localKey, filename: file.name, progress: 0, uploading: true }]);
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      const abortExtraction = new AbortController();
+      let pageProgress: { page: number; pages: number } | undefined;
+      setPendingUploads((current) => [...current, { key: localKey, filename: file.name, progress: 0, uploading: true, extracting: isPdf }]);
+      const extraction = isPdf
+        ? extractPdfText(file, (progress) => {
+          pageProgress = progress;
+          setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, extracting: true, pageProgress: progress } : item));
+        }, abortExtraction.signal).then((text) => ({ text }), (error: unknown) => ({ error }))
+        : undefined;
+      let record: UploadRecord | undefined;
       try {
-        const record = await uploadFile(file, (progress) => setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, progress } : item)));
-        setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, record, progress: 100, uploading: false } : item));
+        record = await uploadFile(file, (progress) => setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, progress } : item)));
+        if (record.kind === "pdf") {
+          if (record.text) {
+            abortExtraction.abort();
+          } else {
+            const extracted = await extraction;
+            if (!extracted || "error" in extracted) {
+              const error = extracted && "error" in extracted ? extracted.error : new Error("PDF extraction did not start");
+              if (!isPasswordProtectedPdfError(error) && !(error instanceof DOMException && error.name === "AbortError")) {
+                reportClientError({
+                  level: "error",
+                  message: `PDF extraction failed (error_name=${errorName(error)}, pages=${pageProgress?.pages ?? 0}, size=${file.size})`,
+                  route: "/api/uploads",
+                });
+              }
+              await deleteUpload(record.upload_id).catch(() => undefined);
+              setPendingUploads((current) => current.filter((item) => item.key !== localKey));
+              setFileError(pdfExtractionErrorMessage(error));
+              continue;
+            }
+            setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, record, extractedText: extracted.text, extracting: false } : item));
+            let stats: PdfTextStats;
+            try {
+              stats = await storePdfText(record.upload_id, extracted.text);
+            } catch {
+              setPendingUploads((current) => current.map((item) => item.key === localKey ? {
+                ...item,
+                uploading: false,
+                extracting: false,
+                error: "Couldn't save PDF text. Retry.",
+                extractedText: extracted.text,
+              } : item));
+              continue;
+            }
+            record = withPdfTextStats(record, stats);
+          }
+        }
+        setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, record, progress: 100, uploading: false, extracting: false, extractedText: undefined } : item));
       } catch (error) {
+        abortExtraction.abort();
         setPendingUploads((current) => current.map((item) => item.key === localKey ? { ...item, uploading: false, error: error instanceof Error ? error.message : "Upload failed." } : item));
       }
+    }
+  };
+  const retryPdfText = async (item: PendingUpload) => {
+    if (!item.record || !item.extractedText || item.record.kind !== "pdf") return;
+    setPendingUploads((current) => current.map((candidate) => candidate.key === item.key ? { ...candidate, uploading: true, error: undefined } : candidate));
+    try {
+      const stats = await storePdfText(item.record.upload_id, item.extractedText);
+      const record = withPdfTextStats(item.record as UploadRecord, stats);
+      setPendingUploads((current) => current.map((candidate) => candidate.key === item.key ? { ...candidate, record, uploading: false, error: undefined, extractedText: undefined } : candidate));
+    } catch (error) {
+      setPendingUploads((current) => current.map((candidate) => candidate.key === item.key ? { ...candidate, uploading: false, error: error instanceof Error ? error.message : "Could not save PDF text." } : candidate));
     }
   };
   const removeUpload = (item: PendingUpload) => {
@@ -144,15 +205,50 @@ export function ChatInterface({ chatId, messageId }: Props) {
     }
   };
 
+  const backfillMissingPdfs = async (uploadIds: string[]) => {
+    setDraftError(`Reading ${uploadIds.length} earlier PDF${uploadIds.length === 1 ? "" : "s"}…`);
+    try {
+      await Promise.all(uploadIds.map(async (uploadId) => {
+        const attachment = detail?.messages.flatMap((message) => message.attachments).find((item) => item.upload_id === uploadId);
+        const file = await fetchPdfFile(uploadId, attachment?.filename ?? "attachment.pdf");
+        let pages = 0;
+        let extracted: ExtractedPdfText;
+        try {
+          extracted = await extractPdfText(file, (progress) => { pages = progress.pages; });
+        } catch (error) {
+          if (!isPasswordProtectedPdfError(error)) {
+            reportClientError({ level: "error", message: `PDF extraction failed (error_name=${errorName(error)}, pages=${pages}, size=${file.size})`, route: "/api/uploads" });
+          }
+          throw new Error(isPasswordProtectedPdfError(error) ? "A password-protected earlier PDF can't be read." : "Couldn't read an earlier PDF.");
+        }
+        await storePdfText(uploadId, extracted);
+      }));
+      if (chatId) await queryClient.invalidateQueries({ queryKey: ["chat", chatId] });
+      setDraftError(undefined);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Couldn't read earlier PDFs.");
+      throw error;
+    }
+  };
+
   const send = useMutation({
-    mutationFn: async ({ content, parentId, attachmentIds, engine }: { content: string; parentId: string | null; attachmentIds: string[]; engine?: string }): Promise<SendResult> => {
+    mutationFn: async ({ content, parentId, attachmentIds }: { content: string; parentId: string | null; attachmentIds: string[] }): Promise<SendResult> => {
       if (!navigator.onLine) throw new Error("You’re offline. Reconnect to send messages.");
-      if (chatId) {
-        const response = await sendToChat(chatId, parentId, content, undefined, attachmentIds, engine);
-        return { chatId, user_message: response.user_message, assistant_message: response.assistant_message };
+      const request = async (): Promise<SendResult> => {
+        if (chatId) {
+          const response = await sendToChat(chatId, parentId, content, undefined, attachmentIds);
+          return { chatId, user_message: response.user_message, assistant_message: response.assistant_message };
+        }
+        const response = await sendToNewChat(content, undefined, attachmentIds);
+        return { chatId: response.chat.id, chat: response.chat, user_message: response.user_message, assistant_message: response.assistant_message };
+      };
+      try {
+        return await request();
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "pdf_text_missing" || !error.uploadIds.length) throw error;
+        await backfillMissingPdfs(error.uploadIds);
+        return request();
       }
-      const response = await sendToNewChat(content, undefined, attachmentIds, engine);
-      return { chatId: response.chat.id, chat: response.chat, user_message: response.user_message, assistant_message: response.assistant_message };
     },
     onSuccess: ({ chatId: nextChatId, chat, user_message, assistant_message }) => {
       setDraftError(undefined);
@@ -182,13 +278,19 @@ export function ChatInterface({ chatId, messageId }: Props) {
       return;
     }
     if (!content && !attachments.length) return;
-    send.mutate({ content, parentId, attachmentIds: attachments.map((item) => item.upload_id), engine: pdfEngine || undefined });
+    send.mutate({ content, parentId, attachmentIds: attachments.map((item) => item.upload_id) });
   };
 
   const retry = useMutation({
-    mutationFn: ({ messageId, model }: { messageId: string; model?: string }) => {
+    mutationFn: async ({ messageId, model }: { messageId: string; model?: string }) => {
       if (!navigator.onLine) throw new Error("You’re offline. Reconnect to retry responses.");
-      return regenerateMessage(messageId, model);
+      try {
+        return await regenerateMessage(messageId, model);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "pdf_text_missing" || !error.uploadIds.length) throw error;
+        await backfillMissingPdfs(error.uploadIds);
+        return regenerateMessage(messageId, model);
+      }
     },
     onSuccess: ({ assistant_message }) => {
       if (!chatId) return;
@@ -276,6 +378,13 @@ export function ChatInterface({ chatId, messageId }: Props) {
   if (chatId && chatQuery.isLoading) return <section className="grid flex-1 place-items-center text-[11px] text-slate-400">Opening conversation…</section>;
   if (chatId && chatQuery.isError && !chatQuery.data) return <section className="grid flex-1 place-items-center text-[11px] text-slate-400" role="alert">{chatQuery.error.message}</section>;
   const hasMessages = visibleMessages.length > 0;
+  const hasOmittedScan = !canReadPdfs && [
+    ...pendingUploads.map((item) => item.record),
+    ...visibleMessages.flatMap((message) => message.attachments),
+  ].some((attachment) => attachment?.kind === "pdf"
+    && attachment.text_pages != null
+    && attachment.text_pages > 0
+    && attachment.text_empty_pages === attachment.text_pages);
 
   return <section className={`flex min-h-0 flex-1 flex-col items-center justify-center px-[22px] pt-[18px] pb-[21px] max-[720px]:px-[15px] max-[720px]:pt-[18px] max-[720px]:pb-[calc(12px+env(safe-area-inset-bottom))] ${hasMessages ? "!items-stretch !justify-start !pt-[11px]" : ""}`} onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files.map((file) => file.type.startsWith("image/") ? pastedImageName(file) : file)); } }} onDragOver={(event) => { if (online && Array.from(event.dataTransfer.types).includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (event.dataTransfer.files.length) { event.preventDefault(); void addFiles(event.dataTransfer.files); } }}>
     <input ref={fileInput} className="hidden" type="file" multiple disabled={!online} accept={`${canSendImages ? "image/png,image/jpeg,image/webp,image/gif," : ""}.pdf,.txt,.md,.csv,.json,.yaml,.yml,.toml,.xml,.html,.css,.js,.ts,.tsx,.jsx,.rs,.py,.go,.sh,.sql,.log`} onChange={(event) => { if (event.currentTarget.files) void addFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
@@ -300,10 +409,10 @@ export function ChatInterface({ chatId, messageId }: Props) {
               <div className="mb-2 font-mono text-[8px] tracking-[.13em] text-slate-500">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span className="ml-[7px] text-[var(--accent)]"> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
               {editing ? <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)]">
                 <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Edit message…" rows={2} disabled={!online} />
-                <UploadChips items={pendingUploads} onRemove={removeUpload} />
+                <UploadChips items={pendingUploads} onRemove={removeUpload} onRetry={retryPdfText} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} />
                 <div className="flex items-center justify-between"><Button variant="secondary" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online}><Paperclip size={14} /> Add files</Button><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">Press enter to save</span><div className="flex items-center gap-[9px]"><ComposerPrimitive.Cancel className="composer-action-danger" onClick={() => setPendingUploads([])}>Cancel</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="composer-action-primary" aria-label="Save edited message" disabled={!online}><ArrowUpRight size={17} /></ComposerPrimitive.Send></div></div>
               </ComposerPrimitive.Root> : <div className="chat-message-content"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div>}
-              {user && !editing && original?.attachments.length ? <UploadChips items={original.attachments.map((record) => ({ key: record.upload_id, record, progress: 100, uploading: false, persisted: true }))} /> : null}
+              {user && !editing && original?.attachments.length ? <UploadChips items={original.attachments.map((record) => ({ key: record.upload_id, record, progress: 100, uploading: false, persisted: true }))} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} /> : null}
               {!user && item?.generationStatus === "error" && <div className="mt-[9px] text-[10px] text-rose-300" role="alert">{item.error ?? "The response could not be completed."}</div>}
               {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="mt-2 text-[9px] text-slate-400">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
               <div className="chat-message-tools mt-[9px] flex items-center gap-[9px] text-slate-500">
@@ -334,12 +443,12 @@ export function ChatInterface({ chatId, messageId }: Props) {
       {draftError && <div className="mx-auto mb-2 max-w-[710px] rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{draftError}{draftError.toLowerCase().includes("api key") && <a className="ml-2 text-[var(--accent)]" href="/settings">Open Settings</a>}</div>}
       {fileError && <div className="mx-auto mb-2 flex max-w-[710px] items-center justify-between rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{fileError}<Button isIconOnly variant="ghost" className="h-6 w-6 text-rose-300" onPress={() => setFileError(undefined)} aria-label="Dismiss upload error"><X size={12} /></Button></div>}
       {!canSendImages && visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "image")) && <div className="mx-auto mb-2 max-w-[700px] text-[9px] text-amber-200" role="status">This model cannot read images attached earlier in this conversation.</div>}
+      {hasOmittedScan && <div className="mx-auto mb-2 max-w-[700px] text-[9px] text-amber-200" role="status">A scanned PDF has no extractable text and will be omitted because this model cannot read PDF files.</div>}
       <AssistantRuntimeProvider runtime={runtime}>
         <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)] data-[disabled=true]:opacity-55 max-[720px]:px-[11px] max-[720px]:pt-[11px] max-[720px]:pb-2">
           <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
-          <UploadChips items={pendingUploads} onRemove={removeUpload} />
-          {(pendingUploads.some((item) => item.record?.kind === "pdf") || visibleMessages.some((message) => message.attachments.some((attachment) => attachment.kind === "pdf"))) && <label className="flex items-center gap-2 pb-2 pl-1 font-mono text-[8px] text-slate-400">PDF engine <SelectField aria-label="PDF engine for this send" className="min-w-48" value={pdfEngine} isDisabled={!online} onChange={setPdfEngine} options={[{ value: "", label: `Settings default (${settingsQuery.data?.pdf_engine ?? "cloudflare-ai"})` }, { value: "cloudflare-ai", label: "Cloudflare AI" }, { value: "mistral-ocr", label: "Mistral OCR" }, { value: "native", label: "Native" }]} /></label>}
-          <div className="flex items-center justify-between"><div className="flex items-center gap-[9px]"><Button variant="secondary" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</Button>{!chatId && <DefaultModelPicker isDisabled={!online} />}</div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading)}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
+          <UploadChips items={pendingUploads} onRemove={removeUpload} onRetry={retryPdfText} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} />
+          <div className="flex items-center justify-between"><div className="flex items-center gap-[9px]"><Button variant="secondary" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</Button>{!chatId && <DefaultModelPicker isDisabled={!online} />}</div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
         </ComposerPrimitive.Root>
       </AssistantRuntimeProvider>
       <p className="mt-2 mb-0 text-center text-[9px] text-slate-600">Sprinter can make mistakes. Check important information.</p>
@@ -347,7 +456,21 @@ export function ChatInterface({ chatId, messageId }: Props) {
   </section>;
 }
 
-function UploadChips({ items, onRemove }: { items: PendingUpload[]; onRemove?: (item: PendingUpload) => void }) {
+function UploadChips({
+  items,
+  onRemove,
+  onRetry,
+  contextLength,
+  modelName,
+  canReadPdfs,
+}: {
+  items: PendingUpload[];
+  onRemove?: (item: PendingUpload) => void;
+  onRetry?: (item: PendingUpload) => void | Promise<void>;
+  contextLength?: number;
+  modelName?: string;
+  canReadPdfs?: boolean;
+}) {
   if (!items.length) return null;
   return <div className="flex flex-wrap gap-1.5 py-1" aria-label="Attachments">
     {items.map((item) => {
@@ -355,10 +478,39 @@ function UploadChips({ items, onRemove }: { items: PendingUpload[]; onRemove?: (
       const id = file?.upload_id;
       const filename = file?.filename ?? item.filename ?? "Uploading file";
       const image = file?.kind === "image";
+      const pdf = file?.kind === "pdf";
+      const chars = file?.text_chars;
+      const pages = file?.text_pages;
+      const emptyPages = file?.text_empty_pages;
+      const allEmpty = pdf && pages != null && pages > 0 && emptyPages === pages;
+      const tokens = chars == null ? null : Math.ceil(chars / 4);
+      const tooLarge = tokens != null && contextLength != null && tokens > contextLength;
+      let status = item.error ?? (item.uploading
+        ? item.pageProgress
+          ? `Reading page ${item.pageProgress.page} of ${item.pageProgress.pages}…`
+          : item.extracting ? "Reading PDF…" : `Uploading ${item.progress}%`
+        : file
+          ? pdf && allEmpty
+            ? "No text found (scanned?)"
+            : pdf && tokens != null
+              ? `${formatBytes(file.size)} · ~${formatTokenEstimate(tokens)} tokens${emptyPages ? ` · ${emptyPages} of ${pages} pages have no text` : ""}`
+              : `${formatBytes(file.size)} · ${file.kind}`
+          : "Preparing upload…");
+      if (!item.error && !item.uploading && pdf && tooLarge && tokens != null) {
+        status = `${formatBytes(file.size)} · ~${formatTokenEstimate(tokens)} tokens${emptyPages ? ` · ${emptyPages} of ${pages} pages have no text` : ""}`;
+      }
+      const tooltip = allEmpty
+        ? `No text could be extracted. This may be a scan. ${canReadPdfs ? "This model can read PDF files." : "This model cannot read PDF files."}`
+        : emptyPages && pages
+          ? `${emptyPages} of ${pages} pages have little or no text and may be scans. Scanned pages aren't read.`
+          : tooLarge && contextLength != null
+            ? `Larger than ${modelName ?? "the selected model"}'s ${formatTokenEstimate(contextLength)} context`
+            : undefined;
       return <div className={`relative flex min-h-[38px] w-[min(220px,100%)] items-center gap-[7px] overflow-hidden rounded-lg border px-[7px] py-[5px] text-[#a9b5c8] ${item.error ? "border-rose-400/40" : "border-[rgba(120,160,220,.13)]"} bg-[rgba(7,12,22,.55)]`} key={item.key}>
         {image && id ? onRemove ? <img className="size-[30px] shrink-0 rounded object-cover" src={`/api/uploads/${encodeURIComponent(id)}`} alt="" /> : <a href={`/api/uploads/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}><img className="size-[30px] shrink-0 rounded object-cover" src={`/api/uploads/${encodeURIComponent(id)}`} alt="" /></a> : <span className="grid size-7 shrink-0 place-items-center rounded bg-[var(--accent-soft)] text-[var(--accent)]">{file?.kind === "pdf" || file?.kind === "text" ? <FileText size={14} /> : <ImageIcon size={14} />}</span>}
-        <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] text-slate-200" title={filename}>{filename}<small className={`mt-0.5 block font-mono text-[8px] ${item.error ? "text-rose-300" : "text-slate-500"}`}>{item.error ?? (item.uploading ? `Uploading ${item.progress}%` : file ? `${formatBytes(file.size)} · ${file.kind}` : "Preparing upload…")}</small></span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[9px] text-slate-200" title={filename}>{filename}<small className={`mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[8px] ${item.error ? "text-rose-300" : tooLarge ? "text-amber-200" : "text-slate-500"}`} title={tooltip}>{status}</small></span>
         {item.uploading && <span className="absolute bottom-0 left-0 h-0.5 bg-[var(--accent)] transition-[width] duration-150" style={{ width: `${Math.max(4, item.progress)}%` }} />}
+        {onRetry && item.error && item.extractedText && <Button variant="ghost" className="h-6 min-w-0 px-1.5 text-[8px] text-[var(--accent)]" onPress={() => void onRetry(item)}>Retry</Button>}
         {onRemove && <Button isIconOnly variant="ghost" className="ml-auto h-5 w-5 shrink-0 rounded-md text-slate-500 hover:bg-rose-500/10 hover:text-rose-300" onPress={() => onRemove(item)} aria-label={`Remove ${filename}`}><X size={13} /></Button>}
         {id && !onRemove && !image && <a className="ml-auto text-[8px] text-[var(--accent)] no-underline" href={`/api/uploads/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" aria-label={`Open ${filename}`}>Open</a>}
       </div>;
@@ -371,6 +523,25 @@ function formatBytes(size: number) {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+function formatTokenEstimate(tokens: number) {
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : new Intl.NumberFormat().format(tokens);
+}
+
+function withPdfTextStats(record: UploadRecord, stats: PdfTextStats): UploadRecord {
+  return {
+    ...record,
+    text: stats,
+    text_chars: stats.chars,
+    text_pages: stats.pages,
+    text_empty_pages: stats.empty_pages,
+  };
+}
+
+function errorName(error: unknown) {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
 
 function usageSummary(message: ChatMessage) {
   const tokenCount = message.prompt_tokens != null || message.completion_tokens != null

@@ -16,7 +16,7 @@ export type OpenRouterKeyStatus = { set: boolean, hint: string | null, valid: bo
 
 export type UploadLimits = { image_bytes: number, pdf_bytes: number, text_bytes: number, files_per_message: number, total_prompt_bytes: number, };
 
-export type SettingsResponse = { openrouter_api_key: OpenRouterKeyStatus, default_model: string | null, title_model: string | null, favorite_models: Array<string>, custom_instructions: string, pdf_engine: string, upload_limits: UploadLimits, };
+export type SettingsResponse = { openrouter_api_key: OpenRouterKeyStatus, default_model: string | null, title_model: string | null, favorite_models: Array<string>, custom_instructions: string, upload_limits: UploadLimits, };
 
 export type ChatSummary = { id: string, title: string | null, model: string, updated_at: number, };
 
@@ -42,7 +42,7 @@ export type SwitchBranchResponse = { current_leaf_id: string, };
 
 export type MessageRecord = { id: string, chat_id: string, parent_id: string | null, role: string, content: string, status: string, error: string | null, model: string | null, generation_id: string | null, finish_reason: string | null, prompt_tokens: number | null, completion_tokens: number | null, reasoning_tokens: number | null, cost: number | null, created_at: number, updated_at: number, attachments: Array<MessageAttachment>, };
 
-export type MessageAttachment = { upload_id: string, position: number, filename: string, kind: string, mime: string, size: number, pdf_engine: string | null, parse_cache: string | null, };
+export type MessageAttachment = { upload_id: string, position: number, filename: string, kind: string, mime: string, size: number, text_chars: number | null, text_pages: number | null, text_empty_pages: number | null, };
 
 export type SendMessageResponse = { user_message: MessageRecord, assistant_message: MessageRecord, };
 

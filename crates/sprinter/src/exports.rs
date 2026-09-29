@@ -25,7 +25,9 @@ struct AttachmentMetadata {
     mime: String,
     kind: String,
     size: i64,
-    pdf_engine: Option<String>,
+    text_chars: Option<i64>,
+    text_pages: Option<i64>,
+    text_empty_pages: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -90,7 +92,7 @@ async fn export_handler(
     };
     let mut attachment_map = HashMap::<String, Vec<AttachmentMetadata>>::new();
     for row in sqlx::query_as::<_, AttachmentRow>(
-        "SELECT ma.message_id, u.id AS upload_id, ma.position, u.filename, u.mime, u.kind, u.size, ma.pdf_engine \
+        "SELECT ma.message_id, u.id AS upload_id, ma.position, u.filename, u.mime, u.kind, u.size, u.text_chars, u.text_pages, u.text_empty_pages \
          FROM message_attachments ma JOIN uploads u ON u.id = ma.upload_id \
          JOIN messages m ON m.id = ma.message_id WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position",
     )
@@ -185,7 +187,9 @@ struct AttachmentRow {
     mime: String,
     kind: String,
     size: i64,
-    pdf_engine: Option<String>,
+    text_chars: Option<i64>,
+    text_pages: Option<i64>,
+    text_empty_pages: Option<i64>,
 }
 
 impl AttachmentRow {
@@ -197,7 +201,9 @@ impl AttachmentRow {
             mime: self.mime,
             kind: self.kind,
             size: self.size,
-            pdf_engine: self.pdf_engine,
+            text_chars: self.text_chars,
+            text_pages: self.text_pages,
+            text_empty_pages: self.text_empty_pages,
         }
     }
 }
@@ -405,7 +411,9 @@ mod tests {
                 mime: "text/plain".into(),
                 kind: "text".into(),
                 size: 12,
-                pdf_engine: None,
+                text_chars: None,
+                text_pages: None,
+                text_empty_pages: None,
             }],
         )]);
         let output = markdown(&chat, &attachments);

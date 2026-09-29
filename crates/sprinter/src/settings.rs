@@ -112,7 +112,6 @@ pub struct SettingsResponse {
     pub title_model: Option<String>,
     pub favorite_models: Vec<String>,
     pub custom_instructions: String,
-    pub pdf_engine: String,
     pub upload_limits: UploadLimits,
 }
 
@@ -222,6 +221,21 @@ pub async fn model_supports_images(state: &AppState, model: &str) -> Option<bool
         .map(|item| item.input_modalities.iter().any(|m| m == "image"))
 }
 
+pub async fn model_supports_files(state: &AppState, model: &str) -> Option<bool> {
+    let Json(response) = get_models_inner(state.settings.clone(), RefreshQuery { refresh: None })
+        .await
+        .ok()?;
+    response
+        .items
+        .iter()
+        .find(|item| item.id == model)
+        .map(|item| {
+            item.input_modalities
+                .iter()
+                .any(|modality| matches!(modality.to_ascii_lowercase().as_str(), "file" | "pdf"))
+        })
+}
+
 /// Force a model catalog refresh for the background maintenance task.
 pub async fn refresh_models(state: &AppState) -> Result<usize, &'static str> {
     let Json(response) = get_models_inner(
@@ -233,14 +247,6 @@ pub async fn refresh_models(state: &AppState) -> Result<usize, &'static str> {
     .await
     .map_err(|error| error.message)?;
     Ok(response.items.len())
-}
-
-pub async fn default_pdf_engine(state: &AppState) -> Result<String, &'static str> {
-    Ok(setting_value(&state.settings.pool, "pdf_engine")
-        .await
-        .map_err(|_| "Could not read the PDF engine setting")?
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "cloudflare-ai".to_owned()))
 }
 
 pub async fn upload_limits(state: &AppState) -> Result<UploadLimits, &'static str> {
@@ -319,10 +325,6 @@ async fn get_settings_inner(
             .await?
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default(),
-        pdf_engine: setting_value(&state.pool, "pdf_engine")
-            .await?
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "cloudflare-ai".into()),
         upload_limits: setting_value(&state.pool, "upload_limits")
             .await?
             .and_then(|v| serde_json::from_value(v).ok())
@@ -360,7 +362,6 @@ async fn patch_settings_inner(
                 | "title_model"
                 | "favorite_models"
                 | "custom_instructions"
-                | "pdf_engine"
                 | "upload_limits"
         ) {
             return Err(ResponseError::bad_request(
@@ -403,18 +404,6 @@ async fn patch_settings_inner(
             ));
         }
         updates.push(("custom_instructions", value.clone()));
-    }
-    if let Some(value) = values.get("pdf_engine") {
-        if !matches!(
-            value.as_str(),
-            Some("cloudflare-ai" | "mistral-ocr" | "native")
-        ) {
-            return Err(ResponseError::bad_request(
-                "invalid_setting",
-                "pdf_engine must be cloudflare-ai, mistral-ocr, or native",
-            ));
-        }
-        updates.push(("pdf_engine", value.clone()));
     }
     if let Some(value) = values.get("upload_limits") {
         let limits: UploadLimits = serde_json::from_value(value.clone()).map_err(|_| {
@@ -477,15 +466,12 @@ async fn patch_settings_inner(
 
     let changed = values.keys().map(String::as_str).collect::<Vec<_>>();
     if !changed.is_empty() {
-        let instructions = values
-            .get("custom_instructions")
-            .and_then(Value::as_str);
+        let instructions = values.get("custom_instructions").and_then(Value::as_str);
         tracing::info!(
             keys = ?changed,
             default_model = ?values.get("default_model").and_then(serde_json::Value::as_str),
             title_model = ?values.get("title_model").and_then(serde_json::Value::as_str),
             favorite_models = ?values.get("favorite_models"),
-            pdf_engine = ?values.get("pdf_engine").and_then(serde_json::Value::as_str),
             upload_limits = ?values.get("upload_limits"),
             key_set = values.get("openrouter_api_key").map(|value| {
                 value.as_str().is_some_and(|key| !key.trim().is_empty())
@@ -970,6 +956,12 @@ mod tests {
         let saved = patch_settings_inner(state.clone(), json!({"openrouter_api_key":"test-key"}))
             .await
             .unwrap();
+        assert!(
+            serde_json::to_value(&saved.0)
+                .unwrap()
+                .get("pdf_engine")
+                .is_none()
+        );
         assert!(saved.0.openrouter_api_key.set);
         assert_eq!(
             saved.0.openrouter_api_key.hint.as_deref(),
@@ -983,13 +975,18 @@ mod tests {
         .unwrap();
         assert!(!stored.contains("test-key"));
 
+        let removed_setting = patch_settings_inner(state.clone(), json!({"pdf_engine":"native"}))
+            .await
+            .unwrap_err();
+        assert_eq!(removed_setting.code, "unknown_setting");
+
         let first = get_models_inner(state.clone(), RefreshQuery { refresh: None })
             .await
             .unwrap();
         let second = get_models_inner(state.clone(), RefreshQuery { refresh: None })
             .await
             .unwrap();
-        assert_eq!(first.0.items.len(), 3);
+        assert_eq!(first.0.items.len(), 4);
         assert_eq!(second.0.items[1].id, "test/vision");
         assert_eq!(
             request_log
