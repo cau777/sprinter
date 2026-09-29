@@ -27,7 +27,7 @@ function pdfFixture(lines: string[], filename: string) {
 async function selectChatModel(page: import("@playwright/test").Page, modelId: "test/file") {
   const picker = page.getByRole("button", { name: "Choose model, current test/text" });
   await picker.click();
-  await page.getByRole("button", { name: new RegExp(`Fake PDF ${modelId}`) }).click();
+  await page.getByRole("button", { name: `Select Fake PDF (${modelId})` }).click();
 }
 
 async function lastRequestContaining(page: import("@playwright/test").Page, marker: string) {

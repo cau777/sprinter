@@ -115,7 +115,7 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
                   const isFavorite = favorites.includes(model.id);
                   const isSelected = value === model.id;
                   return <li key={model.id} className={`flex items-center gap-2 rounded-lg border-b border-[var(--border)] px-2 py-1 last:border-0 ${isSelected ? "bg-[var(--accent-soft)]" : "hover:bg-white/[.025]"}`}>
-                    <button type="button" className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]" aria-pressed={isSelected} onClick={() => { onChange(model.id); setIsOpen(false); setQuery(""); }}>
+                    <button type="button" className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]" aria-label={`Select ${model.name} (${model.id})`} aria-pressed={isSelected} onClick={() => { onChange(model.id); setIsOpen(false); setQuery(""); }}>
                       <span className="grid min-w-0 flex-1 gap-1 text-left">
                         <span className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-slate-100"><span className="truncate">{model.name}</span>{isSelected && <span className="shrink-0 text-[9px] font-normal text-[var(--accent)]">Current model</span>}</span>
                         <span className="truncate font-mono text-[9px] text-slate-500">{model.id}</span>

@@ -11,9 +11,10 @@ test("retry preserves assistant siblings and switches the visible branch", async
   const chatId = initialUrl.pathname.slice(1);
   const first = await page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).current_leaf_id as string, chatId);
   const assistant = page.locator('.chat-message[data-role="assistant"]').last();
-  await assistant.locator("select").selectOption("test/title");
-  await assistant.getByRole("button", { name: "Retry" }).click();
-  await expect(page.locator('.message-branch-picker:has-text("2 / 2")')).toBeVisible({ timeout: 15_000 });
+  await assistant.getByRole("button", { name: /Retry model for message/ }).click();
+  await page.getByRole("option", { name: "Fake Title" }).click();
+  await assistant.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('.chat-message[data-role="assistant"]').last()).toHaveAttribute("data-running", "false", { timeout: 15_000 });
 
   const detail = await page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()), chatId);
@@ -23,7 +24,7 @@ test("retry preserves assistant siblings and switches the visible branch", async
 
   await page.getByRole("button", { name: /Previous branch for message/ }).click();
   await expect.poll(async () => page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).current_leaf_id, chatId)).toBe(first);
-  await expect(page.locator('.message-branch-picker:has-text("1 / 2")')).toBeVisible();
+  await expect(page.getByText("1 / 2", { exact: true })).toBeVisible();
 
   const userMessage = page.locator('.chat-message[data-role="user"]').first();
   await userMessage.getByRole("button", { name: "Edit" }).click();
@@ -32,7 +33,7 @@ test("retry preserves assistant siblings and switches the visible branch", async
   await editComposer.fill("Edit this message without deleting its first version.");
   await editComposer.press("Enter");
   await expect(page.getByText("You said: Edit this message without deleting its first version.", { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('.message-branch-picker:has-text("2 / 2")')).toBeVisible();
+  await expect(page.getByText("2 / 2", { exact: true })).toBeVisible();
   const edited = await page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()), chatId);
   expect(edited.messages.filter((message: { role: string; parent_id: string | null }) => message.role === "user" && message.parent_id === null)).toHaveLength(2);
 });
