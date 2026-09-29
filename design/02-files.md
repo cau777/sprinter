@@ -7,7 +7,7 @@ Status: **Decided**
 | Kind | Examples | How it reaches the model |
 |---|---|---|
 | Images | png, jpg, webp, gif | Sent as OpenRouter `image_url` content parts (base64 data URL). Only offered when the selected model supports image input. |
-| PDFs | pdf | Sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` (paid, for scans), and `native` (models with built-in PDF support, billed as input tokens). The plugin accepts one engine per request, so the Settings default or a single composer override applies to all uncached PDFs in the prompt. `message_attachments.pdf_engine` records the engine requested when each PDF was attached. The effective engine override is sent in the message request. |
+| PDFs | pdf | **Superseded by [14-pdf-text.md](14-pdf-text.md):** text is extracted in the browser and sent as a text part. Previously: sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` (paid, for scans), and `native` (models with built-in PDF support, billed as input tokens). The plugin accepts one engine per request, so the Settings default or a single composer override applies to all uncached PDFs in the prompt. `message_attachments.pdf_engine` records the engine requested when each PDF was attached. The effective engine override is sent in the message request. |
 | Text and code | txt, md, csv, json, source files | Inlined into the user message as a fenced block labeled with the filename. No provider-side file support is needed. |
 
 Office documents (docx/xlsx/pptx) are **out of scope** for v1.
@@ -103,7 +103,7 @@ every attachment that appears in the branch path. This matters in two ways:
 
 - **Tokens:** images and PDFs are billed again on every turn, just as they are in any
   chat UI. Prompt caching at providers that support it softens this.
-- **PDF parsing:** OpenRouter returns file `annotations` with the parsed PDF content.
+- **PDF parsing** (superseded by [14-pdf-text.md](14-pdf-text.md)): OpenRouter returns file `annotations` with the parsed PDF content.
   We store them in `message_attachments.parse_cache` and send them back on later turns,
   so OpenRouter skips re-parsing. This matters for the paid `mistral-ocr` engine.
   Annotation shape (from the OpenRouter PDF guide):
