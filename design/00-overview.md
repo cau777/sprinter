@@ -53,8 +53,8 @@ model provider.
 | [11-testing.md](11-testing.md) | E2E (Playwright + fake OpenRouter), backend tests | Decided |
 | [12-implementation-plan.md](12-implementation-plan.md) | Milestones M0–M9, repo layout, risks | Active |
 | [13-logging.md](13-logging.md) | Server logging: files, format, levels, event catalog, redaction | Decided |
-| [14-pdf-text.md](14-pdf-text.md) | PDF text extraction in the browser with pdf.js; no third-party parsing | Proposed |
-| [15-messages-api-migration.md](15-messages-api-migration.md) | Move all OpenRouter requests from Chat Completions to the Messages API | Proposed |
+| [14-pdf-text.md](14-pdf-text.md) | PDF text extraction in the browser with pdf.js; no third-party parsing | Implemented |
+| [15-messages-api-migration.md](15-messages-api-migration.md) | Move all OpenRouter requests from Chat Completions to the Messages API | Implemented |
 | [16-openrouter-tools.md](16-openrouter-tools.md) | OpenRouter server tools as composer pills: web search, bash, local date | Proposed |
 
 ## Open questions

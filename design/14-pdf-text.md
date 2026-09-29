@@ -41,7 +41,7 @@ PDF engine setting in [07-settings.md](07-settings.md).
 | Text storage | A file next to the PDF, `uploads/<sha[0..2]>/<sha>.txt`, so identical PDFs share one extraction. |
 | Send gating | Send waits for both the PDF upload and the extraction, like it already waits for uploads. There's no background upload. |
 | Token estimate | The chip shows `~N tokens` (characters ÷ 4) and warns when that's more than the chat model's context length. |
-| Scanned PDF | If the model supports `file` input, the PDF is sent with the `file-parser` plugin pinned to `native`. Otherwise the send is blocked with an explanation. |
+| Scanned PDF | If the model supports `file` input, the PDF is sent as a Messages API `document` block with `file-parser` pinned to `native`. Otherwise the send is blocked with an explanation. |
 | PDF engine setting | Removed from Settings, the composer and the API. |
 
 ## Client
@@ -156,16 +156,15 @@ chip ready, Send enabled
 | PDF state | Content part sent |
 |---|---|
 | Text with at least one non-empty page | A text part: `Attached PDF: report.pdf (40 pages, text extracted)` followed by the text in a fence, using the same fence-length rule as text files. |
-| No text (`empty_pages = pages`) and the model's `input_modalities` has `file` | A `file` part with the base64 PDF, and the request gets `plugins: [{id: "file-parser", pdf: {engine: "native"}}]`. |
+| No text (`empty_pages = pages`) and the model's `input_modalities` has `file` | A Messages API `document` block with the base64 PDF, and the request gets `plugins: [{id: "file-parser", pdf: {engine: "native"}}]`. |
 | No text and the model can't read files | A text part: `[PDF omitted: scan.pdf. No text could be extracted and the current model can't read PDFs]`. The composer shows a one-line warning, like the existing image rule. |
 | Text never stored (an upload from before this change) | The send returns `409 pdf_text_missing` with the upload ids. See [Existing PDFs](#existing-pdfs). |
 
 - The `native` engine is **always set explicitly** on the fallback. Without an engine,
   OpenRouter falls back to `mistral-ocr` for models that can't read files, which would
   bring the third party back.
-- Text parts work the same way on Chat Completions and the Messages API. After
-  [15-messages-api-migration.md](15-messages-api-migration.md), the native fallback
-  becomes a `document` block with a base64 PDF source.
+- Text parts and scanned-PDF fallback use the Messages API shapes described in
+  [15-messages-api-migration.md](15-messages-api-migration.md).
 - **Memory:** reading a text file into the prompt costs far less than base64-encoding the
   PDF did (5.4 MB of text versus about 117 MB of base64 for the 88 MB PDF). The old
   worst-case peak only applies now to scanned PDFs on the native fallback.

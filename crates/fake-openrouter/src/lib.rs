@@ -40,7 +40,7 @@ impl FakeOpenRouter {
             .route("/api/v1/models", get(models))
             .route("/api/v1/credits", get(credits))
             .route("/api/v1/key", get(key_info))
-            .route("/api/v1/chat/completions", post(chat_completions))
+            .route("/api/v1/messages", post(messages))
             .route("/__requests", get(requests))
             .route("/__reset", post(reset))
             .with_state(self.clone())
@@ -177,12 +177,16 @@ async fn reset(State(state): State<FakeOpenRouter>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-async fn chat_completions(
+async fn messages(
     State(state): State<FakeOpenRouter>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    state.record("POST", "/api/v1/chat/completions", &headers, body.clone());
+    state.record("POST", "/api/v1/messages", &headers, body.clone());
+
+    if let Some(response) = http_error(&body) {
+        return response;
+    }
 
     let user_text = last_user_text(&body);
     if body.get("stream").and_then(Value::as_bool) != Some(true) {
@@ -202,6 +206,38 @@ async fn chat_completions(
     Sse::new(output).into_response()
 }
 
+fn http_error(body: &Value) -> Option<Response> {
+    let status = body
+        .get("model")
+        .and_then(Value::as_str)?
+        .strip_prefix("test/http-error-")?
+        .parse::<u16>()
+        .ok()?;
+    let (kind, error_type, message) = match status {
+        400 => (
+            "invalid_request_error",
+            "invalid_request",
+            "This endpoint's maximum context length is 200000 tokens.",
+        ),
+        401 => ("authentication_error", "authentication", "Bad API key."),
+        402 => ("payment_error", "payment_required", "No credits remain."),
+        429 => (
+            "rate_limit_error",
+            "rate_limit_exceeded",
+            "Rate limit exceeded.",
+        ),
+        503 => ("api_error", "server_error", "Provider unavailable."),
+        _ => ("api_error", "unknown", "Provider rejected the request."),
+    };
+    Some(
+        (
+            StatusCode::from_u16(status).ok()?,
+            Json(json!({"type":"error","error":{"type":kind,"error_type":error_type,"message":message},"request_id":"gen-fake"})),
+        )
+            .into_response(),
+    )
+}
+
 #[derive(Clone, Copy)]
 enum Scenario {
     Echo,
@@ -209,6 +245,7 @@ enum Scenario {
     Error,
     Rich,
     Think,
+    Truncated,
 }
 impl Scenario {
     fn from_text(text: &str) -> Self {
@@ -220,6 +257,8 @@ impl Scenario {
             Self::Rich
         } else if text.contains("[[think]]") {
             Self::Think
+        } else if text.contains("[[truncated]]") {
+            Self::Truncated
         } else {
             Self::Echo
         }
@@ -230,21 +269,57 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
     if matches!(scenario, Scenario::Error) {
         return vec![
             (
-                Duration::from_millis(60),
-                sse_data(
-                    json!({"id":"fake-completion","object":"chat.completion.chunk","created":now_secs(),"model":model_name(body),"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}),
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
                 ),
             ),
             (
                 Duration::from_millis(60),
-                sse_data(
-                    json!({"id":"fake-completion","object":"chat.completion.chunk","created":now_secs(),"model":model_name(body),"choices":[{"index":0,"delta":{"content":"Partial reply"},"finish_reason":null}]}),
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Partial reply"}}),
                 ),
             ),
             (
                 Duration::from_millis(60),
-                sse_data(
-                    json!({"error":{"message":"Rate limit exceeded","code":429,"metadata":{"provider_name":"Fake"}}}),
+                named_data(
+                    "error",
+                    json!({"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded","error_type":"rate_limit_exceeded"},"request_id":"gen-fake"}),
+                ),
+            ),
+        ];
+    }
+
+    if matches!(scenario, Scenario::Truncated) {
+        return vec![
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Cut off"}}),
                 ),
             ),
         ];
@@ -269,21 +344,65 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
     } else {
         Duration::ZERO
     };
-    let mut out = Vec::new();
+    let mut out = vec![(
+        Duration::ZERO,
+        named_data(
+            "message_start",
+            json!({
+                "type":"message_start",
+                "message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","content":[],"usage":{"input_tokens":12,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":0}}
+            }),
+        ),
+    )];
+    out.push((Duration::ZERO, named_data("ping", json!({"type":"ping"}))));
+    if matches!(scenario, Scenario::Think) {
+        out.extend([
+            (Duration::ZERO, named_data("content_block_start", json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"internal thought"}}))),
+            (Duration::ZERO, named_data("content_block_delta", json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"internal thought"}}))),
+            (Duration::ZERO, named_data("content_block_stop", json!({"type":"content_block_stop","index":0}))),
+            (Duration::ZERO, named_data("content_block_start", json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}))),
+            (Duration::ZERO, named_data("content_block_stop", json!({"type":"content_block_stop","index":1}))),
+        ]);
+    }
+    let unknown_index = if matches!(scenario, Scenario::Think) {
+        2
+    } else {
+        0
+    };
+    out.extend([
+        (Duration::ZERO, named_data("content_block_start", json!({"type":"content_block_start","index":unknown_index,"content_block":{"type":"future_unknown","data":{}}}))),
+        (Duration::ZERO, named_data("content_block_delta", json!({"type":"content_block_delta","index":unknown_index,"delta":{"type":"text_delta","text":"ignored unknown block"}}))),
+        (Duration::ZERO, named_data("content_block_stop", json!({"type":"content_block_stop","index":unknown_index}))),
+    ]);
+    let text_index = unknown_index + 1;
+    out.push((Duration::ZERO, named_data("content_block_start", json!({
+        "type":"content_block_start","index":text_index,"content_block":{"type":"text","text":""}
+    }))));
     for (index, part) in parts.iter().enumerate() {
         let delay = if index == 0 { initial } else { interval };
-        out.push((delay, sse_data(json!({
-            "id":"fake-completion", "object":"chat.completion.chunk", "created":now_secs(), "model":model_name(body),
-            "choices":[{"index":0,"delta":{"content":part},"finish_reason":null}]
+        out.push((delay, named_data("content_block_delta", json!({
+            "type":"content_block_delta","index":text_index,"delta":{"type":"text_delta","text":part}
         }))));
     }
-    let final_chunk = json!({
-        "id":"fake-completion", "object":"chat.completion.chunk", "created":now_secs(), "model":model_name(body),
-        "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
-        "usage":{"prompt_tokens":12,"completion_tokens":parts.len() as u64,"total_tokens":12 + parts.len() as u64,"cost":0.0003}
-    });
-    out.push((interval, sse_data(final_chunk)));
-    out.push((Duration::ZERO, Event::default().data("[DONE]")));
+    out.push((
+        interval,
+        named_data(
+            "content_block_stop",
+            json!({"type":"content_block_stop","index":text_index}),
+        ),
+    ));
+    out.push((interval, named_data("message_delta", json!({
+        "type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},
+        "usage":{"input_tokens":12,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":parts.len(),"output_tokens_details":{"thinking_tokens":2},"cost":0.0003}
+    }))));
+    out.push((
+        Duration::ZERO,
+        named_data("message_stop", json!({"type":"message_stop"})),
+    ));
+    out.push((
+        Duration::ZERO,
+        Event::default().event("data").data("[DONE]"),
+    ));
     out
 }
 
@@ -307,8 +426,8 @@ fn split_reply_exact(reply: &str, count: usize) -> Vec<String> {
         .collect()
 }
 
-fn sse_data(value: Value) -> Event {
-    Event::default().data(value.to_string())
+fn named_data(event: &str, value: Value) -> Event {
+    Event::default().event(event).data(value.to_string())
 }
 fn model_name(body: &Value) -> &str {
     body.get("model")
@@ -356,10 +475,16 @@ fn title_completion(body: &Value, text: &str) -> Value {
         .trim()
         .to_owned();
     let title = cleaned.chars().take(60).collect::<String>();
+    let split_index = title.chars().count() / 2;
+    let split = title
+        .char_indices()
+        .nth(split_index)
+        .map_or(title.len(), |(index, _)| index);
+    let (first, second) = title.split_at(split);
     json!({
-        "id":"fake-title", "object":"chat.completion", "created":now_secs(), "model":model_name(body),
-        "choices":[{"index":0,"message":{"role":"assistant","content":title},"finish_reason":"stop"}],
-        "usage":{"prompt_tokens":8,"completion_tokens":title.len() as u64,"total_tokens":8 + title.len() as u64,"cost":0.00001}
+        "id":"msg-fake-title", "type":"message", "role":"assistant", "model":model_name(body),
+        "content":[{"type":"text","text":first},{"type":"text","text":second}],
+        "stop_reason":"end_turn","usage":{"input_tokens":8,"output_tokens":title.len() as u64,"cost":0.00001}
     })
 }
 

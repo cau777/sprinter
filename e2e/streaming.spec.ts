@@ -7,6 +7,7 @@ test("reattaches after reload, shows thinking, and stops a reply", async ({ page
   await composer.press("Enter");
   await expect(page.getByText("THINKING…")).toBeVisible();
   await expect(page.getByText("You said: Give me a considered answer.", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("internal thought", { exact: true })).toHaveCount(0);
 
   await composer.fill("[[slow]] Please keep streaming after a reload.");
   await composer.press("Enter");

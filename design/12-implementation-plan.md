@@ -70,7 +70,10 @@ Build the skeleton and settle every open technical unknown before writing featur
   3. **Static build:** a musl static binary with bundled SQLite (FTS5 confirmed working)
      in the default release profile, in a `scratch` Dockerfile. Measure idle RSS
      (target < 30 MB).
-  4. **OpenRouter facts:** check against the current docs:
+  4. **OpenRouter facts:** the original Chat Completions spike is recorded in
+     [01-chat.md](01-chat.md). The current Messages API request, event, usage and error
+     shapes are recorded in [15-messages-api-migration.md](15-messages-api-migration.md).
+     The original checks were:
      - whether `usage: {include: true}` is needed to get `cost`
      - the endpoint and shape of the credits/balance response
      - the `reasoning: {exclude: true}` flag
@@ -111,9 +114,9 @@ Build the skeleton and settle every open technical unknown before writing featur
 
 This is the heart of the app. Branching is deliberately left for M4.
 
-- The OpenRouter client: streaming SSE parser and request builder (system
-  instructions, root-to-leaf path, reasoning excluded, usage included, attribution
-  headers). Errors are mapped to readable messages.
+- The OpenRouter client: Messages API streaming SSE parser and request builder (top-level
+  system instructions, root-to-leaf path, thinking blocks excluded, usage metadata,
+  attribution headers). Errors are mapped to readable messages.
 - **Generation manager:**
   - spawn a task per generation, with an in-memory buffer and broadcast to subscribers
   - flush to the DB about once a second
@@ -164,14 +167,14 @@ This is the heart of the app. Branching is deliberately left for M4.
 - `PUT /api/uploads`: streamed to `tmp/` with hashing, a limit check during streaming,
   content sniffing, an atomic move into content-addressed storage, and dedupe.
   `GET` with the sandbox headers. `DELETE` for unattached uploads.
-- Prompt expansion: images as `image_url`, PDFs as `file` parts with the per-attachment
-  engine and annotation caching in `parse_cache`, and text inlined in fences. Images are
-  replaced with a placeholder for models without vision. The per-prompt size cap applies.
+- Prompt expansion: Messages API `image` blocks, extracted PDF text or a native `document`
+  fallback for scans, and text inlined in fences. Images are replaced with a placeholder
+  for models without vision. The per-prompt size cap applies.
 - The GC sweep for orphans and `tmp/`.
 - Frontend:
   - attach button, paste, and drop anywhere on the chat
   - client-side WebP downscale (GIFs left untouched) and upload progress chips
-  - image thumbnails, and the OCR toggle on PDF chips
+  - image thumbnails, PDF extraction status and token estimates on PDF chips
   - attachments shown on sent messages, opening in a viewer
   - edits pre-filled with the original message's attachments
   - image attach disabled for models without vision, and the warning when switching to
@@ -238,7 +241,7 @@ branches), M6 (attachment metadata) and M3.
 |---|---|---|
 | assistant-ui's external store doesn't cover our branching model | Branch UX rework | M0 spike 1, with a fallback of our own branch picker on top of the primitives |
 | HeroUI lags behind current Tailwind or React | Build friction | M0 spike 2. Pin the versions that work together. |
-| The OpenRouter response shape differs from the docs (cost, annotations) | Wrong spend or PDF cache misses | M0 spike 4. Keep the fake aligned with the real responses. |
+| OpenRouter response details change (usage, events, errors) | Wrong spend or failed generations | Keep the fake and protocol coverage aligned with [15-messages-api-migration.md](15-messages-api-migration.md). |
 | Streaming markdown with Shiki, KaTeX and Mermaid jank on mobile | Poor UX | Lazy loading, Mermaid only on closed blocks, and a profile on a real phone in M5 |
 | iOS Safari PWA quirks (not covered by Chromium-only E2E) | Mobile bugs | Manual check on a real device at the end of M3, M6 and M8 |
 | Memory spikes from large attachments | Container OOM | Per-prompt caps. Measure peak RSS in M9 with a 50 MB PDF. |

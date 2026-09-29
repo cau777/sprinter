@@ -34,11 +34,11 @@ async function lastRequestContaining(page: import("@playwright/test").Page, mark
   await expect.poll(async () => {
     const response = await page.request.get("http://127.0.0.1:4010/__requests");
     const requests = await response.json() as Array<{ path: string; body: Record<string, unknown> }>;
-    return requests.some((request) => request.path === "/api/v1/chat/completions" && JSON.stringify(request.body).includes(marker));
+    return requests.some((request) => request.path === "/api/v1/messages" && request.body.stream === true && JSON.stringify(request.body).includes(marker));
   }, { timeout: 15_000 }).toBe(true);
   const response = await page.request.get("http://127.0.0.1:4010/__requests");
   const requests = await response.json() as Array<{ path: string; body: Record<string, unknown> }>;
-  return requests.findLast((request) => request.path === "/api/v1/chat/completions" && JSON.stringify(request.body).includes(marker))!.body;
+  return requests.findLast((request) => request.path === "/api/v1/messages" && request.body.stream === true && JSON.stringify(request.body).includes(marker))!.body;
 }
 
 test("PDF attachments send extracted text, use native file fallback for scans, and omit unsupported scans", async ({ page }) => {
@@ -55,7 +55,7 @@ test("PDF attachments send extracted text, use native file fallback for scans, a
   await composer.press("Enter");
   const textBody = await lastRequestContaining(page, "pdf-e2e-text");
   expect(JSON.stringify(textBody)).toContain(reportMarker);
-  expect(JSON.stringify(textBody)).not.toContain('"type":"file"');
+  expect(JSON.stringify(textBody)).not.toContain('"type":"document"');
   expect(JSON.stringify(textBody.plugins)).not.toContain("file-parser");
 
   const scanMarker = "pdf-e2e-native-scan";
@@ -75,7 +75,9 @@ test("PDF attachments send extracted text, use native file fallback for scans, a
   await page.getByRole("textbox", { name: "Message" }).press("Enter");
   const nativeBody = await lastRequestContaining(page, scanMarker);
   const nativeJson = JSON.stringify(nativeBody);
-  expect(nativeJson).toContain('"type":"file"');
+  expect(nativeJson).toContain('"type":"document"');
+  expect(nativeJson).toContain('"media_type":"application/pdf"');
+  expect(nativeJson).toContain('"title":"scanned.pdf"');
   expect(nativeBody.plugins).toContainEqual({ id: "file-parser", pdf: { engine: "native" } });
 
   const omittedMarker = "pdf-e2e-omitted-scan";
@@ -88,6 +90,6 @@ test("PDF attachments send extracted text, use native file fallback for scans, a
   const omittedBody = await lastRequestContaining(page, omittedMarker);
   const omittedJson = JSON.stringify(omittedBody);
   expect(omittedJson).toContain("PDF omitted: unsupported-scan.pdf");
-  expect(omittedJson).not.toContain('"type":"file"');
+  expect(omittedJson).not.toContain('"type":"document"');
   expect(JSON.stringify(omittedBody.plugins)).not.toContain("file-parser");
 });

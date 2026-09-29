@@ -256,6 +256,9 @@ impl Manager {
     ) -> Result<(), GenerationError> {
         let assistant_id = prepared.assistant_message.id.clone();
         let chat_id = prepared.chat_id.clone();
+        let session_id = ensure_chat_session_id(&self.pool, &chat_id)
+            .await
+            .map_err(|_| GenerationError::Internal)?;
         let (events, _) = broadcast::channel(256);
         let (cancel, cancel_rx) = watch::channel(None);
         let (finished, _) = watch::channel(false);
@@ -300,6 +303,7 @@ impl Manager {
                     prepared,
                     assistant_id,
                     key,
+                    session_id,
                     started_by,
                     task_running,
                     cancel_rx,
@@ -413,6 +417,7 @@ impl Manager {
         prepared: PreparedGeneration,
         assistant_id: String,
         key: SecretString,
+        session_id: String,
         started_by: Option<String>,
         running: Arc<Running>,
         mut cancel_rx: watch::Receiver<Option<StopReason>>,
@@ -463,6 +468,7 @@ impl Manager {
                     started_by = started_by.as_deref().unwrap_or(""),
                     "started"
                 );
+                tracing::debug!(chat = %prepared.chat_id, session_id = %session_id, "OpenRouter sticky session");
                 let messages = prompt_for_provider(instructions.as_deref(), &expanded.messages);
                 let native_pdf_fallback = expanded.needs_native_pdf_plugin();
                 tokio::select! {
@@ -475,10 +481,10 @@ impl Manager {
                             }
                             None
                         } else {
-                            Some(self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback).await)
+                            Some(self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback, &session_id).await)
                         }
                     }
-                    result = self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback) => Some(result)
+                    result = self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback, &session_id) => Some(result)
                 }
             }
         };
@@ -608,6 +614,10 @@ impl Manager {
                     usage.cost,
                 )
             });
+        let cache_read_tokens = usage
+            .as_ref()
+            .and_then(|usage| usage.cache_read_tokens)
+            .unwrap_or_default();
         if let Err(error) = sqlx::query("UPDATE messages SET content = ?, status = 'complete', error = NULL, finish_reason = ?, prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, cost = ?, updated_at = ? WHERE id = ?")
             .bind(&content).bind(&finish_reason).bind(prompt).bind(completion).bind(reasoning).bind(cost).bind(now_ms()).bind(id).execute(&self.pool).await
         {
@@ -624,6 +634,7 @@ impl Manager {
             prompt_tokens = prompt.unwrap_or_default(),
             completion_tokens = completion.unwrap_or_default(),
             reasoning_tokens = reasoning.unwrap_or_default(),
+            cache_read_tokens,
             cost = cost.unwrap_or_default(),
             subscribers,
             chars = content.chars().count(),
@@ -869,6 +880,31 @@ fn usage_from_values(
     })
 }
 
+async fn ensure_chat_session_id(pool: &SqlitePool, chat_id: &str) -> Result<String, sqlx::Error> {
+    let current =
+        sqlx::query_scalar::<_, Option<String>>("SELECT session_id FROM chats WHERE id = ?")
+            .bind(chat_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    if let Some(session_id) = current {
+        return Ok(session_id);
+    }
+
+    let candidate = crate::chats::new_session_id();
+    sqlx::query("UPDATE chats SET session_id = ? WHERE id = ? AND session_id IS NULL")
+        .bind(candidate)
+        .bind(chat_id)
+        .execute(pool)
+        .await?;
+    sqlx::query_scalar::<_, Option<String>>("SELECT session_id FROM chats WHERE id = ?")
+        .bind(chat_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten()
+        .ok_or(sqlx::Error::RowNotFound)
+}
+
 pub fn mark_interrupted_on_start(
     pool: &SqlitePool,
 ) -> impl std::future::Future<Output = Result<u64, sqlx::Error>> + '_ {
@@ -958,8 +994,8 @@ mod tests {
         assert_eq!(late_status.as_deref(), Some("complete"));
         assert_eq!(late_content, first_content);
         assert!(late_content.contains("You said: hello generation"));
-        let row = sqlx::query_as::<_, (String, String, Option<f64>)>(
-            "SELECT content, status, cost FROM messages WHERE id = ?",
+        let row = sqlx::query_as::<_, (String, String, Option<f64>, Option<String>, Option<i64>, Option<i64>, Option<i64>)>(
+            "SELECT content, status, cost, finish_reason, prompt_tokens, completion_tokens, reasoning_tokens FROM messages WHERE id = ?",
         )
         .bind(&prepared.assistant_message.id)
         .fetch_one(&state.pool)
@@ -968,10 +1004,30 @@ mod tests {
         assert_eq!(row.0, late_content);
         assert_eq!(row.1, "complete");
         assert_eq!(row.2, Some(0.0003));
+        assert_eq!(row.3.as_deref(), Some("stop"));
+        assert_eq!(row.4, Some(19));
+        assert_eq!(row.5, Some(4));
+        assert_eq!(row.6, Some(2));
+        let session_id: String = sqlx::query_scalar("SELECT session_id FROM chats WHERE id = ?")
+            .bind(&prepared.chat_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        assert_eq!(session_id.len(), 32);
+        assert!(session_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert!(fake.requests_snapshot().iter().any(|request| {
-            request.path == "/api/v1/chat/completions"
+            request.path == "/api/v1/messages"
                 && request.body["stream"] == true
-                && request.body["reasoning"]["exclude"] == true
+                && request.body["session_id"] == session_id
+                && request.body["system"] == "Keep the answer concise"
+                && request.body.get("max_tokens").is_none()
+                && request.body.get("reasoning").is_none()
+        }));
+        assert!(fake.requests_snapshot().iter().any(|request| {
+            request.path == "/api/v1/messages"
+                && request.body["stream"] == false
+                && request.body["max_tokens"] == 64
+                && request.body.get("session_id").is_none()
         }));
         server.abort();
         state.pool.close().await;
@@ -1013,6 +1069,28 @@ mod tests {
         .unwrap();
         assert_eq!(row.1, "cancelled");
         assert!(!row.0.is_empty());
+        server.abort();
+        state.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn existing_chat_gets_one_stable_random_session_id_on_generation() {
+        let (state, _fake, server) = test_state().await;
+        let prepared = send(&state, "legacy chat session").await;
+        sqlx::query("UPDATE chats SET session_id = NULL WHERE id = ?")
+            .bind(&prepared.chat_id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let first = super::ensure_chat_session_id(&state.pool, &prepared.chat_id)
+            .await
+            .unwrap();
+        let second = super::ensure_chat_session_id(&state.pool, &prepared.chat_id)
+            .await
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_hexdigit()));
         server.abort();
         state.pool.close().await;
     }
@@ -1071,9 +1149,7 @@ mod tests {
         let request = fake
             .requests_snapshot()
             .into_iter()
-            .find(|request| {
-                request.path == "/api/v1/chat/completions" && request.body["stream"] == true
-            })
+            .find(|request| request.path == "/api/v1/messages" && request.body["stream"] == true)
             .unwrap();
         let content = request.body["messages"]
             .as_array()
@@ -1083,13 +1159,11 @@ mod tests {
             .unwrap()["content"]
             .as_array()
             .unwrap();
-        assert_eq!(content[1]["type"], "file");
-        assert!(
-            content[1]["file"]["file_data"]
-                .as_str()
-                .unwrap()
-                .starts_with("data:application/pdf;base64,")
-        );
+        assert_eq!(content[1]["type"], "document");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "application/pdf");
+        assert_eq!(content[1]["title"], "scan.pdf");
+        assert!(content[1]["source"]["data"].as_str().is_some());
         assert_eq!(request.body["plugins"][1]["id"], "file-parser");
         assert_eq!(request.body["plugins"][1]["pdf"]["engine"], "native");
         server.abort();

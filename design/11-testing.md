@@ -30,8 +30,9 @@ repeatable.
   subset of OpenRouter we use:
   - `GET /api/v1/models` returns a fixed list: a text-only model, a vision model, and a
     cheap title model.
-  - `POST /api/v1/chat/completions` streams canned SSE deltas with a small delay per
-    chunk and a final `usage` with `cost`. Non-streaming calls return a title.
+  - `POST /api/v1/messages` serves named Messages API SSE events, including thinking,
+    unknown content blocks, usage, mid-stream errors, and the `[DONE]` tail. Non-streaming
+    calls return text content blocks for titles.
   - `GET /api/v1/credits` and `GET /api/v1/key` return a fixed balance and key
     validation. The key `bad-key` gets a 401.
   - `GET /__requests` returns the requests it received, so tests can assert what
@@ -101,7 +102,7 @@ built. If it grows past that, trim or merge journeys instead of adding infrastru
 | `chat` @mobile | Send a message and see the streamed reply. The Stop button appears and then goes away. The chat shows in the sidebar with its auto title. Rename a chat. Delete a chat. |
 | `branches` | Edit a user message, `‹ 2 / 2 ›` appears, switching back restores the old reply. Regenerate creates a sibling. The branch survives a reload. |
 | `streaming` | Reload during a `[[slow]]` reply: it reattaches and completes. Stop keeps the partial text and shows the cancelled state. `[[error]]` shows the error with Retry, and Retry works. `[[think]]` shows "Thinking…". |
-| `files` @mobile | Image: a thumbnail chip appears, and the fake receives an `image_url` part. PDF: the fake receives a `file` part with engine `cloudflare-ai`. A text file is inlined. An oversized file is rejected with its limit shown. An unsupported type is rejected. Remove a chip before sending. |
+| `files` @mobile | Image: a thumbnail chip appears, and the fake receives a base64 `image` block. PDF: the fake receives extracted text or a `document` block with the native parser for scans. A text file is inlined. An oversized file is rejected with its limit shown. An unsupported type is rejected. Remove a chip before sending. |
 | `models` | Search the picker. Starring a favorite puts it first, and that persists. Switching model mid-chat makes the fake receive the new slug. Image attach is disabled for a text-only model. |
 | `render` | `[[rich]]`: a table renders, the code block has a working Copy button, KaTeX output is present, and Mermaid renders an SVG. |
 | `search` | Find a phrase from an earlier chat, and clicking the result opens that chat. |

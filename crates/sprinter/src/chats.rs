@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,6 +22,12 @@ pub struct ChatSummary {
     pub model: String,
     #[ts(type = "number")]
     pub updated_at: i64,
+}
+
+pub fn new_session_id() -> String {
+    let mut bytes = [0_u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -356,14 +363,18 @@ pub async fn get_chat_detail(pool: &SqlitePool, id: &str) -> Result<Option<ChatD
 
 pub async fn create_chat(pool: &SqlitePool, model: &str) -> Result<ChatSummary, ChatError> {
     let id = Uuid::now_v7().to_string();
+    let session_id = new_session_id();
     let now = now_ms();
-    sqlx::query("INSERT INTO chats(id, model, created_at, updated_at) VALUES(?, ?, ?, ?)")
-        .bind(&id)
-        .bind(model)
-        .bind(now)
-        .bind(now)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "INSERT INTO chats(id, session_id, model, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(session_id)
+    .bind(model)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
     get_chat(pool, &id).await?.ok_or(ChatError::NotFound)
 }
 

@@ -1,6 +1,6 @@
 # 15: Migration to the Messages API
 
-Status: **Proposed**. Assumes [14-pdf-text.md](14-pdf-text.md) is implemented: PDFs reach
+Status: **Implemented**. Assumes [14-pdf-text.md](14-pdf-text.md) is implemented: PDFs reach
 the model as extracted text, and there's no parse cache.
 
 Every OpenRouter generation and title request moves from Chat Completions

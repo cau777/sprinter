@@ -75,7 +75,11 @@ closed, phone locked), the generation keeps running and its result is persisted.
   The error says the conversation is too long for the model and suggests switching to a
   model with a larger context or starting a new chat.
 
-### Outgoing request shape
+### Original Chat Completions request shape (superseded)
+
+The transport below was replaced by the Messages API in
+[15-messages-api-migration.md](15-messages-api-migration.md), which is the current source
+for the provider request and stream format.
 
 - `model`: the chat's current model, or the model picked in the regenerate menu.
 - `messages`: the global custom instructions (if any) as `system`, then the root-to-leaf
@@ -96,11 +100,10 @@ straightforward.
 
 ## Reasoning (thinking) output
 
-Hidden. Requests send OpenRouter's `reasoning: { exclude: true }`, so reasoning text is
-never streamed, stored, or shown. Reasoning models still think, and are billed for it:
-`reasoning_tokens` and cost are recorded. Until the first content token arrives, the
-reply shows the streaming glow with a muted "Thinking…" label, so a long reasoning phase
-doesn't look stalled.
+Hidden. Messages API `thinking` and `redacted_thinking` blocks are discarded by the stream
+parser, so reasoning text is never stored or shown. Reasoning models still think, and are
+billed for it: `reasoning_tokens` and cost are recorded. Until the first content token
+arrives, the reply shows the streaming glow with a muted "Thinking…" label.
 
 ## Titles
 
@@ -122,7 +125,10 @@ fetch.
 Search uses SQLite FTS5 over message content and chat titles. Results link to the chat, and to the matching message where
 possible.
 
-## OpenRouter protocol spike (2026-09-25)
+## Original Chat Completions protocol spike (superseded)
+
+This spike informed the original client. The current request and response protocol is
+documented in [15-messages-api-migration.md](15-messages-api-migration.md).
 
 Checked the current official documentation index and API reference at
 `https://openrouter.ai/docs/llms.txt` and its linked Markdown pages, plus the live

@@ -552,15 +552,19 @@ pub async fn send_new_chat(
         .or_else(|| default_model.map(str::to_owned))
         .ok_or(MessageError::NoDefaultModel)?;
     let id = Uuid::now_v7().to_string();
+    let session_id = chats::new_session_id();
     let now = now_ms();
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO chats(id, model, created_at, updated_at) VALUES(?, ?, ?, ?)")
-        .bind(&id)
-        .bind(&model)
-        .bind(now)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO chats(id, session_id, model, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(session_id)
+    .bind(&model)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     let mut generation = insert_exchange(&mut tx, &id, request, model).await?;
     generation.created_chat = true;
     tx.commit().await?;

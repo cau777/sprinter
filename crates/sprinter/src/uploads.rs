@@ -140,10 +140,11 @@ pub async fn expand_prompt(
                 if pages > 0 && pages == empty_pages {
                     if file_support {
                         let bytes = tokio::fs::read(content_path(data_dir, &upload.0)).await?;
-                        parts.push(json!({"type":"file", "file":{
-                            "filename":upload.1,
-                            "file_data":format!("data:application/pdf;base64,{}", STANDARD.encode(bytes))
-                        }}));
+                        parts.push(json!({
+                            "type":"document",
+                            "source":{"type":"base64", "media_type":"application/pdf", "data":STANDARD.encode(bytes)},
+                            "title":upload.1
+                        }));
                         pdf_native += 1;
                     } else {
                         parts.push(json!({"type":"text", "text":format!(
@@ -167,8 +168,8 @@ pub async fn expand_prompt(
             let bytes = tokio::fs::read(content_path(data_dir, &upload.0)).await?;
             match upload.4.as_str() {
                 "image" => parts.push(json!({
-                    "type":"image_url",
-                    "image_url":{"url":format!("data:{};base64,{}", upload.2, STANDARD.encode(bytes))}
+                    "type":"image",
+                    "source":{"type":"base64", "media_type":upload.2, "data":STANDARD.encode(bytes)}
                 })),
                 "text" => {
                     let text = String::from_utf8_lossy(&bytes);
@@ -1436,13 +1437,10 @@ mod tests {
             .unwrap();
         let parts = expanded.messages[0].content.as_array().unwrap();
         assert_eq!(parts[0]["text"], "Summarize these");
-        assert_eq!(parts[1]["type"], "image_url");
-        assert!(
-            parts[1]["image_url"]["url"]
-                .as_str()
-                .unwrap()
-                .starts_with("data:image/webp;base64,")
-        );
+        assert_eq!(parts[1]["type"], "image");
+        assert_eq!(parts[1]["source"]["type"], "base64");
+        assert_eq!(parts[1]["source"]["media_type"], "image/webp");
+        assert!(parts[1]["source"]["data"].as_str().is_some());
         assert_eq!(parts[2]["type"], "text");
         assert!(
             parts[2]["text"]
@@ -1500,7 +1498,13 @@ mod tests {
         let native = expand_prompt(&pool, &root, &scan_prompt, true, true, 1024 * 1024)
             .await
             .unwrap();
-        assert_eq!(native.messages[0].content[1]["type"], "file");
+        assert_eq!(native.messages[0].content[1]["type"], "document");
+        assert_eq!(native.messages[0].content[1]["source"]["type"], "base64");
+        assert_eq!(
+            native.messages[0].content[1]["source"]["media_type"],
+            "application/pdf"
+        );
+        assert_eq!(native.messages[0].content[1]["title"], "empty-scan.pdf");
         assert!(native.needs_native_pdf_plugin());
         let omitted = expand_prompt(&pool, &root, &scan_prompt, true, false, 1024 * 1024)
             .await
