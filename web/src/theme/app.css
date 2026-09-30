@@ -171,6 +171,15 @@ button { color: inherit; }
   background: var(--accent);
 }
 .composer-action-primary:hover { background: #6cecff; }
+.button.button--secondary.composer-attach-control {
+  width: 40px !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 0 !important;
+  border-radius: 10px !important;
+  color: #d7deea;
+}
 .composer-action-danger {
   color: #ff9aab;
   background: rgba(255,93,122,.13);
