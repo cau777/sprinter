@@ -217,7 +217,6 @@ button { color: inherit; }
 .chat-message[data-running="true"] { border-left-color: var(--accent); animation: stream-glow 2s ease-in-out infinite; }
 .chat-message[data-role="assistant"][data-message-status="error"] { border-left-color: var(--danger); }
 .chat-message[data-role="assistant"][data-message-status="cancelled"],.chat-message[data-role="assistant"][data-message-status="interrupted"] { border-left-color: var(--warning); }
-.chat-thinking { align-self: stretch; max-width: 760px; margin: 4px auto 0; padding: 18px 20px; border-left: 2px solid var(--accent); color: var(--accent); font: 11px "JetBrains Mono", monospace; letter-spacing: .14em; animation: stream-glow 2s ease-in-out infinite; }
 .chat-message-content { color: #d5dce8; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .chat-message-content p { margin: 0 0 12px; }
 .chat-message-content p:last-child { margin-bottom: 0; }

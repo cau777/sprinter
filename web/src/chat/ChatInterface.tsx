@@ -493,8 +493,6 @@ export function ChatInterface({ chatId, messageId }: Props) {
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>}
-    {streamingMessage && !streamingMessage.content && <div className="chat-thinking" role="status">{searchProgressLabel(streamingMessage)}</div>}
-
     <div className="mx-auto mt-auto w-full max-w-[710px] max-[720px]:mt-5">
       {draftError && <div className="mx-auto mb-2 max-w-[710px] rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{draftError}{draftError.toLowerCase().includes("api key") && <a className="ml-2 text-[var(--accent)]" href="/settings">Open Settings</a>}</div>}
       {fileError && <div className="mx-auto mb-2 flex max-w-[710px] items-center justify-between rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{fileError}<Button isIconOnly variant="ghost" className="h-6 w-6 text-rose-300" onPress={() => setFileError(undefined)} aria-label="Dismiss upload error"><X size={12} /></Button></div>}
@@ -502,7 +500,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
       {hasOmittedScan && <div className="mx-auto mb-2 max-w-[700px] text-[9px] text-amber-200" role="status">A scanned PDF has no extractable text and will be omitted because this model cannot read PDF files.</div>}
       <AssistantRuntimeProvider runtime={runtime}>
         <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)] data-[disabled=true]:opacity-55 max-[720px]:px-[11px] max-[720px]:pt-[11px] max-[720px]:pb-2">
-          {!chatId && <div className="mb-2"><DefaultModelPicker isDisabled={!online || Boolean(streamingMessage)} /></div>}
+          {!chatId && <div className="mb-3"><DefaultModelPicker isDisabled={!online || Boolean(streamingMessage)} /></div>}
           <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
           <UploadChips items={pendingUploads} onRemove={removeUpload} onRetry={retryPdfText} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} />
           <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-[7px]">
