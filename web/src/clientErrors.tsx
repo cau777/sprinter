@@ -81,7 +81,7 @@ export class ClientErrorBoundary extends Component<BoundaryProps, BoundaryState>
 
   render() {
     if (this.state.failed) {
-      return <main className="route-loading" role="alert"><div><h1>Something went wrong</h1><p>Reload Sprinter to continue.</p><Button variant="primary" onPress={() => window.location.reload()}>Reload</Button></div></main>;
+      return <main className="m-auto text-[11px] text-[#8c98ad]" role="alert"><div><h1>Something went wrong</h1><p>Reload Sprinter to continue.</p><Button variant="primary" onPress={() => window.location.reload()}>Reload</Button></div></main>;
     }
     return this.props.children;
   }

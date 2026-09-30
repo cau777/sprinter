@@ -10,23 +10,21 @@ test("retry preserves assistant siblings and switches the visible branch", async
   const initialUrl = new URL(page.url());
   const chatId = initialUrl.pathname.slice(1);
   const first = await page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).current_leaf_id as string, chatId);
-  const assistant = page.locator('.chat-message[data-role="assistant"]').last();
-  await assistant.getByRole("button", { name: /Retry model for message/ }).click();
-  await page.getByRole("option", { name: "Fake Title" }).click();
-  await assistant.getByRole("button", { name: "Retry", exact: true }).click();
+  const assistant = page.getByTestId("assistant-message").last();
+  await assistant.getByRole("button", { name: "Retry response" }).click();
   await expect(page.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('.chat-message[data-role="assistant"]').last()).toHaveAttribute("data-running", "false", { timeout: 15_000 });
+  await expect(page.getByTestId("assistant-message").last()).toHaveAttribute("data-running", "false", { timeout: 15_000 });
 
   const detail = await page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()), chatId);
   expect(detail.messages.filter((message: { role: string }) => message.role === "assistant")).toHaveLength(2);
   expect(detail.model).toBe("test/text");
-  expect(detail.messages.find((message: { id: string }) => message.id === detail.current_leaf_id).model).toBe("test/title");
+  expect(detail.messages.find((message: { id: string }) => message.id === detail.current_leaf_id).model).toBe("test/text");
 
   await page.getByRole("button", { name: /Previous branch for message/ }).click();
   await expect.poll(async () => page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).current_leaf_id, chatId)).toBe(first);
   await expect(page.getByText("1 / 2", { exact: true })).toBeVisible();
 
-  const userMessage = page.locator('.chat-message[data-role="user"]').first();
+  const userMessage = page.getByTestId("user-message").first();
   await userMessage.getByRole("button", { name: "Edit" }).click();
   const editComposer = page.getByPlaceholder("Edit message…");
   await expect(editComposer).toHaveValue("Keep both answers in this branch.");

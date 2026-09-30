@@ -72,7 +72,7 @@ function CopyCode({ language, code }: CodeHeaderProps) {
     }
     window.setTimeout(() => setCopied(false), 1800);
   };
-  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><Button variant="ghost" className="rounded px-2 py-1 font-mono text-[9px] text-slate-300 hover:bg-white/10" onPress={copy}>{copied ? "Copied" : "Copy"}</Button></div>;
+  return <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-[rgba(120,160,220,.16)] bg-[#101827] px-2.5 py-1.5 font-mono text-[11px] uppercase text-[#8294ac]"><span>{language ?? "CODE"}</span><Button data-testid="copy-code-button" variant="ghost" className="rounded px-2 py-1 font-mono text-[11px] text-slate-300 hover:bg-white/10" onPress={copy}>{copied ? "Copied" : "Copy"}</Button></div>;
 }
 
 function SafeLink({ children, href, ...props }: ComponentPropsWithoutRef<"a">) {
@@ -112,7 +112,7 @@ function MermaidDiagram({ components: { Pre }, code }: SyntaxHighlighterProps) {
     return () => { active = false; };
   }, [code, complete, id]);
   if (!complete || failed || !svg) return <Pre><code className="language-mermaid">{code}</code></Pre>;
-  return <div className="mermaid-diagram" role="img" aria-label="Mermaid diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
+  return <div className="my-3 overflow-x-auto rounded-lg border border-[rgba(120,160,220,.16)] bg-[#101827] p-3 text-center [&_svg]:h-auto [&_svg]:max-w-full" role="img" aria-label="Mermaid diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
 const codeComponents = {
@@ -125,7 +125,7 @@ function MarkdownCode({ className, children }: ComponentPropsWithoutRef<"code">)
   const code = raw.replace(/\n$/, "");
   const language = /language-([^\s]+)/.exec(className ?? "")?.[1];
   const block = Boolean(language) || raw.endsWith("\n");
-  if (!block) return <code className={className}>{children}</code>;
+  if (!block) return <code className={`${className ?? ""} rounded bg-[rgba(120,160,220,.1)] px-[5px] py-0.5 font-mono text-[.9em] text-[#a8d8f4]`}>{children}</code>;
   if (language === "mermaid") {
     return <MermaidDiagram components={codeComponents} language="mermaid" code={code} />;
   }

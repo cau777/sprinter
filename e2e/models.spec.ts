@@ -9,16 +9,16 @@ test("favoriting a model in a new chat saves it and updates the picker", async (
     if (response.url().endsWith("/api/settings") && response.request().method() === "PATCH") settingsPatches.push(response.url());
   });
   const saveResponse = page.waitForResponse((response) => response.url().endsWith("/api/settings") && response.request().method() === "PATCH");
-  await page.getByRole("button", { name: "Add Fake Vision to favorites" }).click();
+  await page.getByRole("button", { name: "Add Fake PDF to favorites" }).click();
   const response = await saveResponse;
   expect(response.ok()).toBeTruthy();
-  expect(await response.json()).toMatchObject({ favorite_models: ["test/vision"], default_model: "test/text" });
+  expect(await response.json()).toMatchObject({ favorite_models: ["test/file"], default_model: "test/text" });
 
   await expect.poll(async () => page.evaluate(async () => {
     const settings = await (await fetch("/api/settings")).json();
     return { favorite_models: settings.favorite_models, default_model: settings.default_model };
-  })).toEqual({ favorite_models: ["test/vision"], default_model: "test/text" });
-  await expect(page.getByRole("button", { name: "Remove Fake Vision from favorites" })).toBeVisible();
+  })).toEqual({ favorite_models: ["test/file"], default_model: "test/text" });
+  await expect(page.getByRole("button", { name: "Remove Fake PDF from favorites" })).toBeVisible();
   expect(settingsPatches).toHaveLength(1);
 });
 
@@ -31,8 +31,8 @@ test("changing a chat model affects later messages but keeps earlier model recor
 
   const chatId = new URL(page.url()).pathname.slice(1);
   await page.getByText("test/text", { exact: true }).first().click();
-  await page.getByRole("button", { name: "Select Fake Vision (test/vision)" }).click();
-  await expect.poll(async () => page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).model, chatId)).toBe("test/vision");
+  await page.getByRole("button", { name: "Select Fake PDF (test/file)" }).click();
+  await expect.poll(async () => page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()).model, chatId)).toBe("test/file");
 
   await page.getByRole("textbox", { name: "Message" }).fill("Use the new model now.");
   await page.getByRole("textbox", { name: "Message" }).press("Enter");
@@ -40,5 +40,5 @@ test("changing a chat model affects later messages but keeps earlier model recor
 
   const detail = await page.evaluate(async (id) => (await (await fetch(`/api/chats/${id}`)).json()), chatId);
   const assistantMessages = detail.messages.filter((message: { role: string }) => message.role === "assistant");
-  expect(assistantMessages.map((message: { model: string }) => message.model)).toEqual(["test/text", "test/vision"]);
+  expect(assistantMessages.map((message: { model: string }) => message.model)).toEqual(["test/text", "test/file"]);
 });

@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const dataDir = mkdtempSync(resolve(tmpdir(), "sprinter-e2e-"));
+const appPort = process.env.E2E_APP_PORT ?? "8080";
+const appBaseUrl = `http://127.0.0.1:${appPort}`;
 process.env.SPRINTER_E2E_DATA_DIR = dataDir;
+process.env.SPRINTER_E2E_BASE_URL = appBaseUrl;
 
 export default defineConfig({
   testDir: ".",
@@ -19,7 +22,7 @@ export default defineConfig({
   globalSetup: "./global-setup.ts",
   globalTeardown: "./global-teardown.ts",
   use: {
-    baseURL: "http://127.0.0.1:8080",
+    baseURL: appBaseUrl,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
@@ -41,12 +44,12 @@ export default defineConfig({
     {
       command: "cargo run --quiet -p sprinter -- serve",
       cwd: "..",
-      url: "http://127.0.0.1:8080/healthz",
+      url: `${appBaseUrl}/healthz`,
       reuseExistingServer: false,
       timeout: 180_000,
       env: {
         DATA_DIR: dataDir,
-        PORT: "8080",
+        PORT: appPort,
         BIND: "127.0.0.1",
         SPRINTER_PASSWORD: "test",
         SPRINTER_INSECURE_COOKIES: "true",

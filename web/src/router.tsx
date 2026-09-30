@@ -65,19 +65,19 @@ const homeRoute = createRoute({
 const setupRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/setup",
-  component: () => <Suspense fallback={<div className="route-loading">Preparing your workspace…</div>}><Setup /></Suspense>,
+  component: () => <Suspense fallback={<div className="m-auto text-[11px] text-[#8c98ad]">Preparing your workspace…</div>}><Setup /></Suspense>,
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
-  component: () => <Suspense fallback={<div className="route-loading">Loading settings…</div>}><SettingsPage /></Suspense>,
+  component: () => <Suspense fallback={<div className="m-auto text-[11px] text-[#8c98ad]">Loading settings…</div>}><SettingsPage /></Suspense>,
 });
 
 const spikeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/spike/assistant-ui",
-  component: () => <Suspense fallback={<div className="route-loading">Opening runtime lab…</div>}><AssistantStoreSpike /></Suspense>,
+  component: () => <Suspense fallback={<div className="m-auto text-[11px] text-[#8c98ad]">Opening runtime lab…</div>}><AssistantStoreSpike /></Suspense>,
 });
 
 const chatRoute = createRoute({
@@ -89,7 +89,7 @@ const chatRoute = createRoute({
   component: function ChatRoute() {
     const { chatId } = chatRoute.useParams();
     const { messageId } = chatRoute.useSearch();
-    return <Suspense fallback={<div className="route-loading">Opening conversation…</div>}><ChatPage chatId={chatId} messageId={messageId} /></Suspense>;
+    return <Suspense fallback={<div className="m-auto text-[11px] text-[#8c98ad]">Opening conversation…</div>}><ChatPage chatId={chatId} messageId={messageId} /></Suspense>;
   },
 });
 

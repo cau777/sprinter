@@ -15,7 +15,7 @@ export function HelpDialog({ open, onClose }: Props) {
         <Modal.Dialog aria-labelledby="help-shortcuts-title" className="mx-auto w-[min(460px,calc(100vw-28px))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[#0d1421] text-[var(--text)] shadow-2xl">
           <Modal.Header className="flex items-center justify-between px-5 pt-4 pb-3">
             <div>
-              <p className="eyebrow">SPRINTER</p>
+              <p className="mb-[11px] font-mono text-[11px] tracking-[.16em] text-[#8290a9]">SPRINTER</p>
               <Modal.Heading id="help-shortcuts-title" className="m-0 font-display text-lg font-medium text-slate-100">Help & shortcuts</Modal.Heading>
             </div>
             <Button isIconOnly variant="ghost" className="h-8 w-8 rounded-lg text-slate-400" aria-label="Close help" onPress={onClose}><X size={17} /></Button>
