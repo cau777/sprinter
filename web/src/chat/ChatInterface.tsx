@@ -659,17 +659,17 @@ function BashToolStep({ step }: { step: ToolStep }) {
     ? step.input.command
     : "Bash command";
   const exitCode = step.output?.exit_code;
-  return <details className="bash-tool-step">
-    <summary>
-      <span className="bash-tool-step-label">Ran</span>
-      <code title={command}>{command}</code>
-      {step.status === "running" ? <span className="bash-tool-status" role="status"><span className="tool-spinner" aria-hidden="true" /> Running</span>
-        : step.status === "error" ? <span className="bash-tool-status bash-tool-error">Stopped</span>
-          : <span className={`bash-tool-exit ${exitCode === 0 ? "" : "bash-tool-error"}`}>exit {exitCode ?? "?"}</span>}
+  return <details className="my-[9px] rounded-lg border border-[rgba(120,160,220,.17)] bg-[rgba(7,12,22,.45)] text-[10px] text-[#bbc8dc]">
+    <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-[7px] px-2.5 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
+      <span className="shrink-0 font-mono text-[9px] text-[#94a3b8]">Ran</span>
+      <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[10px] text-[#dbe6f5]" title={command}>{command}</code>
+      {step.status === "running" ? <span className="ml-auto inline-flex shrink-0 items-center gap-[5px] font-mono text-[9px] text-[var(--accent)]" role="status"><span className="size-2.5 animate-spin rounded-full border border-[rgba(61,232,255,.25)] border-t-[var(--accent)]" aria-hidden="true" /> Running</span>
+        : step.status === "error" ? <span className="ml-auto shrink-0 font-mono text-[9px] text-[#ff9aab]">Stopped</span>
+          : <span className={`ml-auto shrink-0 rounded-full border border-[rgba(120,160,220,.18)] px-1.5 py-px font-mono text-[9px] text-[#94a3b8] ${exitCode === 0 ? "" : "!border-[rgba(255,93,122,.28)] !text-[#ff9aab]"}`}>exit {exitCode ?? "?"}</span>}
     </summary>
-    <div className="bash-tool-output">
-      {step.output?.stdout ? <pre aria-label="Command standard output">{step.output.stdout}</pre> : null}
-      {step.output?.stderr ? <pre className="bash-tool-stderr" aria-label="Command error output">{step.output.stderr}</pre> : null}
+    <div className="grid gap-1.5 border-t border-[rgba(120,160,220,.12)] p-2">
+      {step.output?.stdout ? <pre className="mb-0 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-[5px] bg-[rgba(0,0,0,.28)] p-2 font-mono text-[10px] leading-relaxed text-[#c9d6e8]" aria-label="Command standard output">{step.output.stdout}</pre> : null}
+      {step.output?.stderr ? <pre className="mb-0 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-[5px] bg-[rgba(0,0,0,.28)] p-2 font-mono text-[10px] leading-relaxed text-[#ffb4bf]" aria-label="Command error output">{step.output.stderr}</pre> : null}
       {!step.output && step.status === "running" && <span className="text-slate-400">Waiting for sandbox output…</span>}
       {!step.output && step.status === "error" && <span className="text-slate-400">No output was returned.</span>}
     </div>
@@ -678,9 +678,9 @@ function BashToolStep({ step }: { step: ToolStep }) {
 
 function CitationChips({ citations }: { citations: Citation[] }) {
   if (!citations.length) return null;
-  return <div className="citation-chips" aria-label="Web search sources">
-    {citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noopener noreferrer" title={citation.title}>
-      <span>{citationDomain(citation.url)}</span><strong>{citation.title}</strong>
+  return <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Web search sources">
+    {citations.map((citation) => <a className="inline-flex max-w-[min(100%,420px)] items-baseline gap-[7px] rounded-[7px] border border-[rgba(120,160,220,.15)] bg-[rgba(7,12,22,.4)] px-[7px] py-1 text-[10px] leading-[1.4] text-[#c5d1e3] no-underline hover:border-[var(--accent-line)] hover:text-[var(--accent)]" key={citation.url} href={citation.url} target="_blank" rel="noopener noreferrer" title={citation.title}>
+      <span className="shrink-0 font-mono text-[9px] text-[#8c9ab0]">{citationDomain(citation.url)}</span><strong className="overflow-hidden text-ellipsis whitespace-nowrap font-medium">{citation.title}</strong>
     </a>)}
   </div>;
 }
