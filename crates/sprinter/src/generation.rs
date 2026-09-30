@@ -1178,12 +1178,14 @@ fn spawn_title_task(
     })
 }
 
+const MATH_FORMATTING_INSTRUCTIONS: &str = "When writing mathematics, use LaTeX delimiters: `$...$` for inline math and `$$...$$` for display math. Do not use plain square brackets as math delimiters.";
+
 fn prompt_for_provider(
     instructions: Option<&str>,
     prompt: &[ChatMessage],
     timezone: Option<&str>,
 ) -> Vec<ChatMessage> {
-    let mut system_parts = Vec::new();
+    let mut system_parts = vec![MATH_FORMATTING_INSTRUCTIONS.to_owned()];
     if let Some(instructions) = instructions.filter(|value| !value.trim().is_empty()) {
         system_parts.push(instructions.to_owned());
     }
@@ -1269,7 +1271,7 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenerationError, StreamEvent};
+    use super::{GenerationError, MATH_FORMATTING_INSTRUCTIONS, StreamEvent};
     use crate::{
         config::Config,
         db,
@@ -1363,7 +1365,10 @@ mod tests {
             request.path == "/api/v1/messages"
                 && request.body["stream"] == true
                 && request.body["session_id"] == session_id
-                && request.body["system"] == "Keep the answer concise"
+                && request.body["system"].as_str().is_some_and(|system| {
+                    system.contains(MATH_FORMATTING_INSTRUCTIONS)
+                        && system.contains("Keep the answer concise")
+                })
                 && request.body.get("max_tokens").is_none()
                 && request.body.get("reasoning").is_none()
         }));
