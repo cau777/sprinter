@@ -14,6 +14,7 @@ import { ModelPicker } from "./ModelPicker";
 import { SearchDialog } from "./SearchDialog";
 import { HelpDialog } from "./HelpDialog";
 import { useRegisterSW } from "virtual:pwa-register/react";
+import packageJson from "../../package.json";
 
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -110,7 +111,7 @@ function SidebarContents({ online, onNavigate, onSearch, onHelp }: { online: boo
   return <>
     <Link to="/" className="flex items-center gap-2.5 px-[9px] pt-0.5 pb-[23px] font-display text-[15px] font-bold leading-none tracking-[.16em] text-white no-underline" aria-label="Sprinter home" onClick={onNavigate}>
       <span className="grid size-[29px] place-items-center rounded-[9px] bg-[var(--accent)] text-[var(--bg)] shadow-[0_0_22px_rgba(61,232,255,.2)]"><Sparkles size={17} strokeWidth={1.8} /></span>
-      <span>SPRINTER</span>
+      <span className="flex flex-col gap-1"><span>SPRINTER</span><span className="font-mono text-[8px] font-normal tracking-[.08em] text-slate-500">v{packageJson.version}</span></span>
     </Link>
 
     <div className="grid gap-[7px]">

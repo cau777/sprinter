@@ -68,6 +68,12 @@ with a method that captures the SQLite database consistently and includes `uploa
 Sprinter does not create or retain database snapshots. Use the backup system's restore
 procedure with Sprinter stopped, restoring the database and its matching uploads.
 
+## Versioning
+
+Before creating a GitHub release tagged `vX.Y.Z`, update `web/package.json` to the
+matching `X.Y.Z` version. The web app imports this value and displays it beneath the
+SPRINTER title.
+
 ## Operations
 
 The container health check runs `/sprinter healthcheck`, which opens the configured
@@ -75,5 +81,5 @@ database and verifies it is reachable. Logs are written to stdout and to daily f
 `DATA_DIR/logs/`. Those files can contain short previews of chat messages and should be
 protected like the database; see [design/13-logging.md](design/13-logging.md).
 
-Releases tagged `vX.Y.Z` are built for `linux/amd64` and `linux/arm64` and published to
+Releases tagged `vX.Y.Z` are built for `linux/amd64` and published to
 `ghcr.io/cau777/sprinter` with version and `latest` tags.
