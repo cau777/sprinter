@@ -96,6 +96,7 @@ button { color: inherit; }
   --button-bg-pressed: #6cecff;
   --button-fg: #061018;
   border-color: transparent;
+  color: #061018 !important;
 }
 .button.button--secondary,
 .button.button--outline {
