@@ -49,20 +49,20 @@ export function SearchDialog({ open, onClose }: Props) {
             <label className="flex h-11 shrink-0 items-center gap-2.5 rounded-lg border border-[var(--accent-line)] bg-[rgba(4,9,17,.68)] px-3 text-[var(--accent)]">
               <Search size={16} aria-hidden="true" />
               <Input ref={input} type="search" aria-label="Search messages and chat titles" className="min-w-0 flex-1 border-0 bg-transparent text-xs text-[var(--text)] outline-none placeholder:text-slate-500" placeholder="Search messages and titles…" value={query} onChange={(event) => setQuery(event.target.value)} />
-              <kbd className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[8px] text-slate-500">ESC</kbd>
+              <kbd className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[11px] text-slate-500">ESC</kbd>
             </label>
             <div className="min-h-24 flex-1 overflow-y-auto py-2.5" aria-live="polite">
-        {!query.trim() ? <p className="my-0 px-2 py-5 text-center text-[10px] text-slate-500">Search across your messages and conversation titles.</p>
-          : debounced !== query.trim() || results.isLoading ? <p className="my-0 px-2 py-5 text-center text-[10px] text-slate-500">Searching…</p>
-          : results.isError ? <p className="my-0 px-2 py-5 text-center text-[10px] text-rose-300" role="alert">{results.error.message}</p>
-          : results.data?.length ? results.data.map((result, index) => <Button variant="ghost" className="button-list-item flex w-full flex-col items-start gap-1 border-b border-[var(--border)] text-left hover:bg-[var(--accent-soft)]" key={`${result.chat_id}:${result.message_id ?? "title"}:${index}`} onPress={() => openResult(result.chat_id, result.message_id)}>
+        {!query.trim() ? <p className="my-0 px-2 py-5 text-center text-[11px] text-slate-500">Search across your messages and conversation titles.</p>
+          : debounced !== query.trim() || results.isLoading ? <p className="my-0 px-2 py-5 text-center text-[11px] text-slate-500">Searching…</p>
+          : results.isError ? <p className="my-0 px-2 py-5 text-center text-[11px] text-rose-300" role="alert">{results.error.message}</p>
+          : results.data?.length ? results.data.map((result, index) => <Button variant="ghost" className="button-list-item flex h-auto min-h-[52px] w-full flex-col items-start gap-1 rounded-lg border-b border-[var(--border)] p-2.5 text-left text-[13px] hover:bg-[var(--accent-soft)]" key={`${result.chat_id}:${result.message_id ?? "title"}:${index}`} onPress={() => openResult(result.chat_id, result.message_id)}>
               <span className="text-[11px] font-semibold text-slate-200">{result.chat_title || "Untitled conversation"}</span>
-              <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-slate-400">{result.snippet}</span>
+              <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-slate-400">{result.snippet}</span>
             </Button>)
-          : <p className="my-0 px-2 py-5 text-center text-[10px] text-slate-500">No matching conversations.</p>}
+          : <p className="my-0 px-2 py-5 text-center text-[11px] text-slate-500">No matching conversations.</p>}
             </div>
           </Modal.Body>
-          <Modal.Footer className="flex justify-between gap-3 border-t border-[var(--border)] px-5 py-2.5 text-[8px] text-slate-500"><span>Message results jump to the match.</span><span><kbd>⌘ K</kbd> to open</span></Modal.Footer>
+          <Modal.Footer className="flex justify-between gap-3 border-t border-[var(--border)] px-5 py-2.5 text-[11px] text-slate-500"><span>Message results jump to the match.</span><span><kbd>⌘ K</kbd> to open</span></Modal.Footer>
         </Modal.Dialog>
       </Modal.Container>
     </Modal.Backdrop>

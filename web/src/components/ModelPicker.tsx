@@ -72,7 +72,7 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
   return <>
     <Button
       variant={compact ? "ghost" : "secondary"}
-      className={`${className} flex min-w-0 items-center justify-between gap-2 ${compact ? "min-h-8 rounded-full border border-[var(--accent-line)] bg-[rgba(7,11,19,.38)] px-2.5 text-[9px]" : "min-h-10 rounded-lg px-2.5 text-[10px]"}`}
+      className={`${className} flex min-w-0 items-center justify-between gap-2 ${compact ? "min-h-8 rounded-full border border-[var(--accent-line)] bg-[rgba(7,11,19,.38)] px-2.5 text-[11px]" : "min-h-10 rounded-lg px-2.5 text-[11px]"}`}
       aria-label={selected ? `Choose model, current ${selected.id}` : placeholder}
       aria-haspopup="dialog"
       isDisabled={isDisabled}
@@ -101,13 +101,13 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
               </label>
 
               <div className="flex shrink-0 flex-wrap items-center gap-2" aria-label="Quick filters">
-                <Button variant={newModelsOnly ? "secondary" : "ghost"} className={`gap-1.5 rounded-full px-3 py-1.5 text-[10px] ${newModelsOnly ? "border border-[var(--accent-line)] text-[var(--accent)]" : "border border-[var(--border)] text-slate-400"}`} aria-pressed={newModelsOnly} onPress={() => setNewModelsOnly((enabled) => !enabled)}>
-                  <CalendarDays size={13} /> New models <span className="text-[9px] opacity-70">6 months</span>
+                <Button variant={newModelsOnly ? "secondary" : "ghost"} className={`gap-1.5 rounded-full px-3 py-1.5 text-[11px] ${newModelsOnly ? "border border-[var(--accent-line)] text-[var(--accent)]" : "border border-[var(--border)] text-slate-400"}`} aria-pressed={newModelsOnly} onPress={() => setNewModelsOnly((enabled) => !enabled)}>
+                  <CalendarDays size={13} /> New models <span className="text-[11px] opacity-70">6 months</span>
                 </Button>
-                <Button variant={cheapOnly ? "secondary" : "ghost"} className={`gap-1.5 rounded-full px-3 py-1.5 text-[10px] ${cheapOnly ? "border border-[var(--accent-line)] text-[var(--accent)]" : "border border-[var(--border)] text-slate-400"}`} aria-pressed={cheapOnly} onPress={() => setCheapOnly((enabled) => !enabled)}>
-                  <BadgeDollarSign size={13} /> Cheap models <span className="text-[9px] opacity-70">under $0.50 / 1M input</span>
+                <Button variant={cheapOnly ? "secondary" : "ghost"} className={`gap-1.5 rounded-full px-3 py-1.5 text-[11px] ${cheapOnly ? "border border-[var(--accent-line)] text-[var(--accent)]" : "border border-[var(--border)] text-slate-400"}`} aria-pressed={cheapOnly} onPress={() => setCheapOnly((enabled) => !enabled)}>
+                  <BadgeDollarSign size={13} /> Cheap models <span className="text-[11px] opacity-70">under $0.50 / 1M input</span>
                 </Button>
-                <span className="ml-auto font-mono text-[9px] text-slate-500">{items.length} models</span>
+                <span className="ml-auto font-mono text-[11px] text-slate-500">{items.length} models</span>
               </div>
 
               <ul aria-label="Available models" className="m-0 min-h-0 flex-1 list-none overflow-y-auto rounded-xl border border-[var(--border)] p-1">
@@ -117,9 +117,9 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
                   return <li key={model.id} className={`flex items-center gap-2 rounded-lg border-b border-[var(--border)] px-2 py-1 last:border-0 ${isSelected ? "bg-[var(--accent-soft)]" : "hover:bg-white/[.025]"}`}>
                     <button type="button" className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--accent)]" aria-label={`Select ${model.name} (${model.id})`} aria-pressed={isSelected} onClick={() => { onChange(model.id); setIsOpen(false); setQuery(""); }}>
                       <span className="grid min-w-0 flex-1 gap-1 text-left">
-                        <span className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-slate-100"><span className="truncate">{model.name}</span>{isSelected && <span className="shrink-0 text-[9px] font-normal text-[var(--accent)]">Current model</span>}</span>
-                        <span className="truncate font-mono text-[9px] text-slate-500">{model.id}</span>
-                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[9px] leading-4 text-slate-400">
+                        <span className="flex min-w-0 items-center gap-2 text-[11px] font-semibold text-slate-100"><span className="truncate">{model.name}</span>{isSelected && <span className="shrink-0 text-[11px] font-normal text-[var(--accent)]">Current model</span>}</span>
+                        <span className="truncate font-mono text-[11px] text-slate-500">{model.id}</span>
+                        <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] leading-4 text-slate-400">
                           <span>{(model.context_length / 1000).toFixed(0)}k context</span>
                           <span>In {moneyPerMillion(model.pricing.prompt)} / Out {moneyPerMillion(model.pricing.completion)} per 1M</span>
                           <span className="inline-flex items-center gap-1 text-cyan-300">{model.input_modalities.includes("image") && <><Image size={11} /> image</>}{(model.input_modalities.includes("file") || model.input_modalities.includes("pdf")) && <><FileText size={11} /> pdf</>}</span>
