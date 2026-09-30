@@ -23,7 +23,6 @@ import { extractPdfText, isPasswordProtectedPdfError, type ExtractedPdfText, pdf
 import { reportClientError } from "../clientErrors";
 import { useOnlineStatus } from "../api/useOnlineStatus";
 import { Button, Tooltip } from "@heroui/react";
-import { SelectField } from "../components/SelectField";
 import { WEB_SEARCH, BASH, toolLabel } from "./toolCatalog";
 import { useMessagePartText } from "@assistant-ui/react";
 import { MarkdownContent } from "./MarkdownText";
@@ -109,7 +108,6 @@ export function ChatInterface({ chatId, messageId }: Props) {
   const modelQuery = useQuery({ queryKey: ["models"], queryFn: fetchModels });
   const [coarsePointer, setCoarsePointer] = useState(false);
   const [draftError, setDraftError] = useState<string>();
-  const [retryModels, setRetryModels] = useState<Record<string, string>>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [fileError, setFileError] = useState<string>();
@@ -481,8 +479,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
                 </>}
                 {!user && item?.generationStatus !== "streaming" && <>
                   {original && <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</Button>}
-                  <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" onPress={() => retry.mutate({ messageId: message.id, model: retryModels[message.id] || undefined })} isDisabled={!online || retry.isPending}><RotateCw size={12} /> Retry</Button>
-                  <SelectField aria-label={`Retry model for message ${message.id}`} className="max-w-40" value={retryModels[message.id] ?? ""} isDisabled={!online} onChange={(value) => setRetryModels((current) => ({ ...current, [message.id]: value }))} options={[{ value: "", label: "Same model" }, ...(modelQuery.data?.items.map((model) => ({ value: model.id, label: model.name })) ?? [])]} />
+                  <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" onPress={() => retry.mutate({ messageId: message.id })} isDisabled={!online || retry.isPending}><RotateCw size={12} /> Retry</Button>
                 </>}
                 {siblings.length > 1 && <div className="ml-auto inline-flex items-center gap-[3px] font-mono text-[10px] text-slate-300" aria-label={`${user ? "User" : "Assistant"} branch`}>
                   <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Previous branch for message ${message.id}`} isDisabled={!online || branchIndex <= 0 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex - 1].id)}>‹</Button>
@@ -505,6 +502,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
       {hasOmittedScan && <div className="mx-auto mb-2 max-w-[700px] text-[9px] text-amber-200" role="status">A scanned PDF has no extractable text and will be omitted because this model cannot read PDF files.</div>}
       <AssistantRuntimeProvider runtime={runtime}>
         <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)] data-[disabled=true]:opacity-55 max-[720px]:px-[11px] max-[720px]:pt-[11px] max-[720px]:pb-2">
+          {!chatId && <div className="mb-2"><DefaultModelPicker isDisabled={!online || Boolean(streamingMessage)} /></div>}
           <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
           <UploadChips items={pendingUploads} onRemove={removeUpload} onRetry={retryPdfText} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} />
           <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-[7px]">
@@ -524,7 +522,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
               <Tooltip.Trigger><Button variant="ghost" className="tool-pill tool-pill-upstream" aria-disabled="true" aria-label={`Supported upstream but not by Sprinter: ${(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")}`}><Plus size={14} /></Button></Tooltip.Trigger>
               <Tooltip.Content className="z-50 max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] px-2.5 py-2 text-[10px] leading-5 text-slate-200 shadow-xl">{(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")} are supported upstream but not by Sprinter</Tooltip.Content>
             </Tooltip>}
-            {!chatId && <DefaultModelPicker isDisabled={!online || Boolean(streamingMessage)} />}</div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span><Button isIconOnly variant="secondary" className="composer-attach-control" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={17} /></Button>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
+            </div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span><Button isIconOnly variant="secondary" className="composer-attach-control" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={17} /></Button>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
         </ComposerPrimitive.Root>
       </AssistantRuntimeProvider>
       <p className="mt-2 mb-0 text-center text-[9px] text-slate-600">Sprinter can make mistakes. Check important information.</p>
