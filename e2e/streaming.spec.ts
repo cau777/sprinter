@@ -11,7 +11,7 @@ test("reattaches after reload, shows thinking, and stops a reply", async ({ page
 
   await composer.fill("[[slow]] Please keep streaming after a reload.");
   await composer.press("Enter");
-  await expect(page.locator('.chat-message[data-running="true"]')).toBeVisible();
+  await expect(page.getByTestId("streaming-assistant-message")).toBeVisible();
   await page.reload();
   await expect(page.getByText("You said: Please keep streaming after a reload.", { exact: true })).toBeVisible({ timeout: 15_000 });
 
@@ -29,5 +29,5 @@ test("shows provider errors and offers a retry", async ({ page }) => {
   await composer.fill("[[error]] Show the provider error.");
   await composer.press("Enter");
   await expect(page.getByRole("alert")).toContainText(/rate limited/i, { timeout: 10_000 });
-  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry response" })).toBeVisible();
 });

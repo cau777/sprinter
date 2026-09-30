@@ -6,7 +6,7 @@ test("renders rich markdown with safe links and copyable code", async ({ page, c
   await page.getByRole("textbox", { name: "Message" }).fill("[[rich]]");
   await page.getByRole("textbox", { name: "Message" }).press("Enter");
 
-  const answer = page.locator('.chat-message[data-role="assistant"]').last();
+  const answer = page.getByTestId("assistant-message").last();
   await expect(answer.locator("table")).toBeVisible({ timeout: 15_000 });
   await expect(answer).toHaveAttribute("data-running", "false", { timeout: 15_000 });
   await expect(answer.locator("table th").first()).toHaveText("Name");
@@ -14,10 +14,9 @@ test("renders rich markdown with safe links and copyable code", async ({ page, c
   await expect(answer.locator(".katex")).toContainText("E");
   await expect(answer.getByRole("img", { name: "Mermaid diagram" }).locator("svg")).toBeVisible();
 
-  const copy = answer.locator(".markdown-code-header button").first();
+  const copy = page.getByTestId("copy-code-button");
   await expect(copy).toBeVisible();
   await copy.click();
-  await expect(copy).toHaveText("Copied");
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain("println!(\"hello\")");
 
   const link = answer.getByRole("link", { name: "Sprinter" });

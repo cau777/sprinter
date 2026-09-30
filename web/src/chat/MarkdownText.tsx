@@ -72,7 +72,7 @@ function CopyCode({ language, code }: CodeHeaderProps) {
     }
     window.setTimeout(() => setCopied(false), 1800);
   };
-  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><Button variant="ghost" className="rounded px-2 py-1 font-mono text-[9px] text-slate-300 hover:bg-white/10" onPress={copy}>{copied ? "Copied" : "Copy"}</Button></div>;
+  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><Button data-testid="copy-code-button" variant="ghost" className="rounded px-2 py-1 font-mono text-[9px] text-slate-300 hover:bg-white/10" onPress={copy}>{copied ? "Copied" : "Copy"}</Button></div>;
 }
 
 function SafeLink({ children, href, ...props }: ComponentPropsWithoutRef<"a">) {

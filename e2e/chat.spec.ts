@@ -6,7 +6,7 @@ test("starts a chat, streams a reply, and reloads the saved thread", async ({ pa
   await composer.fill("Hello from a saved conversation.");
   await composer.press("Enter");
 
-  await expect(page.locator('.chat-message[data-role="user"]').getByText("Hello from a saved conversation.", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("user-message").getByText("Hello from a saved conversation.", { exact: true })).toBeVisible();
   await expect(page.getByText("You said: Hello from a saved conversation.", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page).toHaveURL(/\/.+$/);
 
@@ -16,10 +16,13 @@ test("starts a chat, streams a reply, and reloads the saved thread", async ({ pa
   await expect(page).toHaveURL(url);
 
   await expect(page.getByRole("link", { name: "Hello from a saved conversation." })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept("A renamed conversation"));
   await page.getByRole("button", { name: "Rename Hello from a saved conversation." }).click();
+  await expect(page.getByRole("heading", { name: "Rename conversation" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Conversation title" }).fill("A renamed conversation");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("link", { name: "A renamed conversation" })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete A renamed conversation" }).click();
+  await expect(page.getByRole("heading", { name: "Delete conversation?" })).toBeVisible();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByRole("link", { name: "A renamed conversation" })).toHaveCount(0);
 });
