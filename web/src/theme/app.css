@@ -111,8 +111,9 @@ button { color: inherit; }
   --button-bg: rgba(255,93,122,.13);
   --button-bg-hover: rgba(255,93,122,.2);
   --button-bg-pressed: rgba(255,93,122,.2);
-  --button-fg: #ff9aab;
+  --button-fg: #f8fafc;
   border-color: rgba(255,93,122,.25);
+  color: #f8fafc !important;
 }
 .button.button--ghost:not(.button--icon-only):not(.button-list-item) {
   height: 36px;
@@ -182,7 +183,7 @@ button { color: inherit; }
   color: #d7deea;
 }
 .composer-action-danger {
-  color: #ff9aab;
+  color: #f8fafc;
   background: rgba(255,93,122,.13);
   border-color: rgba(255,93,122,.25);
 }
