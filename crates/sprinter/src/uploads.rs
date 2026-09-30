@@ -917,7 +917,10 @@ fn create_private_dir(path: &FsPath) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        if let Err(error) = fs::set_permissions(path, fs::Permissions::from_mode(0o700)) {
+            tracing::warn!(path = %path.display(), %error,
+                "could not secure upload directory; relying on mount-managed permissions");
+        }
     }
     Ok(())
 }

@@ -13,7 +13,17 @@ pub async fn connect(config: &Config) -> Result<SqlitePool, Box<dyn Error>> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&config.data_dir, fs::Permissions::from_mode(0o700))?;
+        if let Err(error) = fs::set_permissions(&config.data_dir, fs::Permissions::from_mode(0o700))
+        {
+            // Mounted volumes may be permission-managed by the runtime (or use
+            // a filesystem that rejects chmod). The directory still has to be
+            // writable below; keep serving and make the operator aware that
+            // their mount is responsible for protecting application data.
+            eprintln!(
+                "could not secure data directory {}: {error}; continuing with mount-managed permissions",
+                config.data_dir.display()
+            );
+        }
     }
     let options = SqliteConnectOptions::new()
         .filename(config.data_dir.join("sprinter.db"))
