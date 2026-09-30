@@ -251,12 +251,27 @@ export function ChatInterface({ chatId, messageId }: Props) {
     setFileError(undefined);
   };
   const copyMessage = async (message: ChatMessage) => {
+    const fallback = () => {
+      const field = document.createElement("textarea");
+      field.value = message.content;
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      field.remove();
+      return copied;
+    };
     try {
-      await navigator.clipboard.writeText(message.content);
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(message.content);
+      else if (!fallback()) throw new Error("Copy failed");
       setCopiedMessageId(message.id);
       window.setTimeout(() => setCopiedMessageId((current) => current === message.id ? null : current), 1800);
     } catch {
-      setCopiedMessageId(null);
+      if (fallback()) {
+        setCopiedMessageId(message.id);
+        window.setTimeout(() => setCopiedMessageId((current) => current === message.id ? null : current), 1800);
+      } else setCopiedMessageId(null);
     }
   };
 
