@@ -768,6 +768,9 @@ fn parse_zdr_endpoint(value: &Value) -> Option<ZdrEndpoint> {
 
 fn parse_model(value: &Value) -> Option<ApiModel> {
     let id = value.get("id")?.as_str()?.to_owned();
+    if id.starts_with('~') {
+        return None;
+    }
     let name = value
         .get("name")
         .and_then(Value::as_str)
@@ -1118,6 +1121,11 @@ mod tests {
         assert_eq!(model.context_length, 32768);
         assert_eq!(model.pricing.prompt, "0.000001");
         assert_eq!(model.input_modalities, ["text", "image"]);
+    }
+
+    #[test]
+    fn dynamic_model_routes_are_excluded() {
+        assert!(parse_model(&json!({ "id": "~openai/gpt-luna-latest" })).is_none());
     }
 
     #[tokio::test]
