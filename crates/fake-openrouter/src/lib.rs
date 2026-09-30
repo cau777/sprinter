@@ -38,6 +38,7 @@ impl FakeOpenRouter {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/api/v1/models", get(models))
+            .route("/api/v1/endpoints/zdr", get(zdr_endpoints))
             .route("/api/v1/credits", get(credits))
             .route("/api/v1/key", get(key_info))
             .route("/api/v1/messages", post(messages))
@@ -92,11 +93,27 @@ pub async fn serve(addr: SocketAddr) -> std::io::Result<()> {
 async fn models(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json<Value> {
     state.record("GET", "/api/v1/models", &headers, Value::Null);
     Json(json!({"data": [
-        model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false, false),
+        with_tools(model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false, false)),
         model("test/vision", "Fake Vision", 65536, "0.000003", "0.000006", true, false),
-        model("test/file", "Fake PDF", 32768, "0.000001", "0.000002", false, true),
+        with_tools(model("test/file", "Fake PDF", 32768, "0.000001", "0.000002", false, true)),
+        with_tools(model("test/partial", "Fake Partial Search", 32768, "0.000001", "0.000002", false, false)),
         model("test/title", "Fake Title", 8192, "0.0000001", "0.0000002", false, false)
     ]}))
+}
+
+async fn zdr_endpoints(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json<Value> {
+    state.record("GET", "/api/v1/endpoints/zdr", &headers, Value::Null);
+    Json(json!({"data": [
+        {"model_id":"test/text","provider_name":"Azure","tag":"azure/global","native_tools":{"openrouter:web_search":{"type":"web_search"},"openrouter:apply_patch":{"type":"apply_patch"}}},
+        {"model_id":"test/partial","provider_name":"Search A","tag":"search-a","native_tools":{"openrouter:web_search":{"type":"google_search"}}},
+        {"model_id":"test/partial","provider_name":"Search B","tag":"search-b","native_tools":{}},
+        {"model_id":"test/file","provider_name":"Azure","tag":"azure/global","native_tools":{}}
+    ]}))
+}
+
+fn with_tools(mut model: Value) -> Value {
+    model["supported_parameters"] = json!(["tools"]);
+    model
 }
 
 fn model(
@@ -246,6 +263,9 @@ enum Scenario {
     Rich,
     Think,
     Truncated,
+    Search,
+    ToolFallback,
+    Bash,
 }
 impl Scenario {
     fn from_text(text: &str) -> Self {
@@ -259,6 +279,12 @@ impl Scenario {
             Self::Think
         } else if text.contains("[[truncated]]") {
             Self::Truncated
+        } else if text.contains("[[tool-fallback]]") {
+            Self::ToolFallback
+        } else if text.contains("[[tool-bash]]") {
+            Self::Bash
+        } else if text.contains("[[tool-search]]") {
+            Self::Search
         } else {
             Self::Echo
         }
@@ -321,6 +347,164 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
                     "content_block_delta",
                     json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Cut off"}}),
                 ),
+            ),
+        ];
+    }
+
+    if matches!(scenario, Scenario::Search | Scenario::ToolFallback) {
+        let fallback = matches!(scenario, Scenario::ToolFallback);
+        let mut chunks = vec![
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"ws_fake_1","name":"openrouter:web_search","input":{}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":0}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"ws_fake_2","name":"openrouter:web_search","input":{}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":1}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Search result summary."}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://example.com/source","title":"Example source","cited_text":"","encrypted_index":""}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":2}),
+                ),
+            ),
+        ];
+        chunks.push((Duration::ZERO, named_data("message_delta", json!({
+            "type":"message_delta","delta":{"stop_reason":"end_turn"},
+            "usage":{"input_tokens":12,"output_tokens":4,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0},"tool_calls_requested":if fallback {1} else {0},"tool_calls_executed":if fallback {1} else {0},"cost":if fallback {0.012} else {0.005},"cost_details":{"upstream_inference_cost":0.005,"server_tool_cost":if fallback {0.007} else {0.0}}}
+        }))));
+        chunks.push((
+            Duration::ZERO,
+            named_data("message_stop", json!({"type":"message_stop"})),
+        ));
+        chunks.push((
+            Duration::ZERO,
+            Event::default().event("data").data("[DONE]"),
+        ));
+        return chunks;
+    }
+
+    if matches!(scenario, Scenario::Bash) {
+        return vec![
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"toolu_fake","name":"openrouter:bash","input":{}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"printf tool-output\"}"}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":0}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":1,"content_block":{"type":"openrouter_bash_tool_result","tool_use_id":"toolu_fake","content":{"command":"printf tool-output","stdout":"tool-output","stderr":"","exitCode":0,"container_id":"container-fake"}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Command completed."}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":2}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_delta",
+                    json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":12,"output_tokens":4,"cost":0.0034,"cost_details":{"upstream_inference_cost":0.0004,"server_tool_cost":0.003}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data("message_stop", json!({"type":"message_stop"})),
+            ),
+            (
+                Duration::ZERO,
+                Event::default().event("data").data("[DONE]"),
             ),
         ];
     }

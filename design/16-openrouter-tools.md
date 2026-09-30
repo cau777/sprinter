@@ -1,6 +1,7 @@
 # 16: OpenRouter tools
 
-Status: **Proposed**. Assumes these are implemented:
+Status: **Implemented** (2026-09-30). Automated tests from the Testing section have not
+been added or run. Assumes these are implemented:
 - [14-pdf-text.md](14-pdf-text.md): PDFs reach the model as text.
 - [15-messages-api-migration.md](15-messages-api-migration.md): every request goes through
   `/api/v1/messages` and has a per-chat `session_id`.
@@ -25,7 +26,7 @@ Every OpenRouter server tool, and how Sprinter handles it:
 
 | Tool | Handling | Runs where | Notes |
 |---|---|---|---|
-| `openrouter:web_search` | **Supported** | Inside the model provider, on a ZDR endpoint (`engine: "native"`) | Offered only for models whose ZDR endpoints list it in `native_tools`. See [Web search](#web-search). |
+| `openrouter:web_search` | **Supported** | Inside the model provider, on a ZDR endpoint (`engine: "native"`) | Offered only when every ZDR endpoint lists it in `native_tools`. See [Web search](#web-search). |
 | `openrouter:bash` | **Supported** | OpenRouter's hosted sandbox (`engine: "openrouter"`), no network | Any model that supports tools. See [Bash](#bash). |
 | `openrouter:datetime` | **Replaced** | Not sent | The user's local date goes in the system prompt instead. See [Date](#date). Not listed in the **+** pill. |
 | `openrouter:apply_patch` | Deferred | Client-side patches | Needs a workspace to apply patches to. |
@@ -72,7 +73,7 @@ How availability is decided for each tool:
 
 | Tool | Available when |
 |---|---|
-| `web_search` | ZDR endpoints of the model list `openrouter:web_search` with an accepted native type (`web_search`, `google_search`). Coverage is `full` when every ZDR endpoint lists it, and `partial` when some do. |
+| `web_search` | Exposed only when every ZDR endpoint for the model lists `openrouter:web_search` with an accepted native type (`web_search`, `google_search`). Partial coverage is unavailable until endpoint-tag routing with `provider.only` is verified. |
 | `bash` | The model has at least one ZDR endpoint and supports `tools`. The tool runs in OpenRouter's sandbox, not in the model provider. |
 | Deferred and not-planned tools (for the **+** pill) | Tools that run natively (e.g. `apply_patch`): listed in `native_tools` on a ZDR endpoint. Tools OpenRouter runs itself: the model supports `tools`. |
 
@@ -129,9 +130,9 @@ Added to the request from [15-messages-api-migration.md](15-messages-api-migrati
 }
 ```
 
-- For `partial` coverage, `provider.only` lists the capable endpoints. Whether `only`
-  accepts endpoint tags such as `google-vertex/global` is unverified (see the open
-  questions). If it doesn't, `partial` is treated as unavailable.
+- Partial coverage is not exposed and no `provider.only` restriction is sent. Endpoint-tag
+  routing with `provider.only` is unverified, so a model is eligible only when all of its
+  ZDR endpoints support native search (see the open questions).
 - `max_tool_calls` caps cost. One question led to four native searches ($0.04) in the spike.
 - Tooltip: "Runs inside {provider} under zero data retention routing. ~$0.01 per search."
 
@@ -142,7 +143,7 @@ Coverage on 2026-09-29:
 | OpenAI gpt-5.5, gpt-5.6 / gpt-6 Luna, Sol, Terra, Astra (+Pro) | Azure | `web_search` | full |
 | Google Gemini 3.x Flash, Pro, Flash-Lite | Vertex | `google_search` | full |
 | xAI Grok 4.20, 4.3, 4.5, grok-build | xAI | `web_search` | full |
-| xAI Grok 4.6, 4.7 | xAI | `web_search` | partial (2/4, 2/3) |
+| xAI Grok 4.6, 4.7 | xAI | `web_search` | partial (2/4, 2/3), unavailable |
 | Anthropic claude-opus-4.5 | Vertex global | `web_search_20260209` | none: type not accepted |
 | Other Anthropic models | Bedrock, Vertex, Azure | none | none |
 
@@ -387,9 +388,9 @@ Citation URLs and full command output are logged at `DEBUG` only.
 
 ## Open questions
 
-1. **`provider.only` with endpoint tags.** `partial` web search routing needs to restrict
-   to specific endpoints such as `google-vertex/global`. Verify that `only` accepts tags.
-   If it doesn't, treat `partial` as unavailable.
+1. **`provider.only` with endpoint tags.** Partial web search coverage is unavailable until
+   routing can be restricted to capable endpoints such as `google-vertex/global`. Verify
+   that `only` accepts endpoint tags before exposing partial coverage.
 2. **Sandbox lifetime.** How long a sleeping container keeps its files, and whether it can
    be deleted when the chat is deleted. OpenRouter documents container file APIs
    (list, download, promote to workspace documents), which may help.

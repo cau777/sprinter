@@ -6,9 +6,11 @@ export type AuthResponse = { ok: boolean, };
 
 export type SessionInfo = { id: string, user_agent: string | null, ip: string | null, created_at: number, last_seen_at: number, expires_at: number, current: boolean, };
 
-export type ApiModel = { id: string, name: string, created_at: number | null, context_length: number, pricing: ModelPricing, input_modalities: Array<string>, };
+export type ApiModel = { id: string, name: string, created_at: number | null, context_length: number, pricing: ModelPricing, input_modalities: Array<string>, tools: Array<ModelTool>, upstream_tools: Array<string>, };
 
 export type ModelPricing = { prompt: string, completion: string, };
+
+export type ModelTool = { id: string, coverage: string, };
 
 export type ModelsResponse = { items: Array<ApiModel>, };
 
@@ -22,7 +24,7 @@ export type ChatSummary = { id: string, title: string | null, model: string, upd
 
 export type ChatPage = { items: Array<ChatSummary>, next_cursor: string | null, };
 
-export type ChatDetail = { id: string, title: string | null, title_source: string, model: string, current_leaf_id: string | null, created_at: number, updated_at: number, messages: Array<MessageRecord>, };
+export type ChatDetail = { id: string, title: string | null, title_source: string, model: string, tools: Array<string>, current_leaf_id: string | null, created_at: number, updated_at: number, messages: Array<MessageRecord>, };
 
 export type SearchResult = { chat_id: string, chat_title: string | null, message_id: string | null, snippet: string, rank: number, };
 
@@ -40,7 +42,13 @@ export type UsageResponse = { balance: number | null, totals: UsagePeriods, by_m
 
 export type SwitchBranchResponse = { current_leaf_id: string, };
 
-export type MessageRecord = { id: string, chat_id: string, parent_id: string | null, role: string, content: string, status: string, error: string | null, model: string | null, generation_id: string | null, finish_reason: string | null, prompt_tokens: number | null, completion_tokens: number | null, reasoning_tokens: number | null, cost: number | null, created_at: number, updated_at: number, attachments: Array<MessageAttachment>, };
+export type MessageRecord = { id: string, chat_id: string, parent_id: string | null, role: string, content: string, status: string, error: string | null, model: string | null, generation_id: string | null, finish_reason: string | null, prompt_tokens: number | null, completion_tokens: number | null, reasoning_tokens: number | null, cost: number | null, tools: Array<string> | null, citations: Array<Citation> | null, tool_steps: Array<ToolStep> | null, web_search_requests: number | null, tool_cost: number | null, tool_fallback: boolean, created_at: number, updated_at: number, attachments: Array<MessageAttachment>, };
+
+export type Citation = { url: string, title: string, };
+
+export type ToolStep = { id: string, tool: string, offset: number, status: string, input: unknown | null, output: ToolStepOutput | null, };
+
+export type ToolStepOutput = { stdout: string, stderr: string, exit_code: number | null, };
 
 export type MessageAttachment = { upload_id: string, position: number, filename: string, kind: string, mime: string, size: number, text_chars: number | null, text_pages: number | null, text_empty_pages: number | null, };
 

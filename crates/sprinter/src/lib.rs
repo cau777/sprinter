@@ -13,6 +13,7 @@ pub mod operations;
 pub mod search;
 pub mod settings;
 pub mod state;
+pub mod tools;
 pub mod uploads;
 pub mod usage;
 pub mod web;

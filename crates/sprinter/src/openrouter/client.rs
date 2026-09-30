@@ -2,7 +2,13 @@ use async_stream::try_stream;
 use futures_util::{Stream, StreamExt};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
-use std::{collections::HashSet, pin::Pin, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    pin::Pin,
+    time::Duration,
+};
+
+use crate::tools::{self, Citation, ToolStep, ToolStepOutput};
 
 #[derive(Clone, Debug)]
 pub struct ChatMessage {
@@ -17,6 +23,17 @@ pub struct ProviderUsage {
     pub reasoning_tokens: Option<i64>,
     pub cache_read_tokens: Option<i64>,
     pub cost: Option<f64>,
+    pub upstream_inference_cost: Option<f64>,
+    pub server_tool_cost: Option<f64>,
+    pub web_search_requests: Option<i64>,
+    pub tool_calls_requested: Option<i64>,
+    pub tool_calls_executed: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ToolRequestConfig {
+    pub enabled: Vec<String>,
+    pub web_search_only: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +47,8 @@ pub enum ProviderEvent {
         finish_reason: Option<String>,
         usage: Option<ProviderUsage>,
     },
+    Citation(Citation),
+    ToolStep(ToolStep),
 }
 
 pub type ProviderStream = Pin<Box<dyn Stream<Item = Result<ProviderEvent, ProviderError>> + Send>>;
@@ -66,6 +85,26 @@ impl OpenRouterClient {
         native_pdf_fallback: bool,
         session_id: &str,
     ) -> Result<ProviderStream, ProviderError> {
+        self.stream_chat_with_tools(
+            key,
+            model,
+            messages,
+            native_pdf_fallback,
+            session_id,
+            &ToolRequestConfig::default(),
+        )
+        .await
+    }
+
+    pub async fn stream_chat_with_tools(
+        &self,
+        key: &SecretString,
+        model: &str,
+        messages: &[ChatMessage],
+        native_pdf_fallback: bool,
+        session_id: &str,
+        tools: &ToolRequestConfig,
+    ) -> Result<ProviderStream, ProviderError> {
         let response = self
             .http
             .post(format!("{}/messages", self.base_url))
@@ -78,6 +117,7 @@ impl OpenRouterClient {
                 true,
                 native_pdf_fallback,
                 Some(session_id),
+                tools,
             ))
             .send()
             .await
@@ -143,7 +183,14 @@ impl OpenRouterClient {
             .bearer_auth(key.expose_secret())
             .header("HTTP-Referer", "https://github.com/cau777/sprinter")
             .header("X-Title", "Sprinter")
-            .json(&request_body(model, &messages, false, false, None))
+            .json(&request_body(
+                model,
+                &messages,
+                false,
+                false,
+                None,
+                &ToolRequestConfig::default(),
+            ))
             .send()
             .await
             .map_err(|_| ProviderError {
@@ -171,6 +218,7 @@ fn request_body(
     stream: bool,
     native_pdf_fallback: bool,
     session_id: Option<&str>,
+    tools: &ToolRequestConfig,
 ) -> Value {
     let mut plugins = vec![json!({"id":"context-compression", "enabled":false})];
     if native_pdf_fallback {
@@ -194,6 +242,7 @@ fn request_body(
             }
         })
         .collect::<Vec<_>>();
+    let has_system = messages.iter().any(|message| message.role == "system");
     let mut body = json!({
         "model": model,
         "messages": api_messages,
@@ -201,7 +250,7 @@ fn request_body(
         "plugins": plugins
     });
     let system = system_parts.join("\n\n");
-    if !system.is_empty() {
+    if has_system {
         body["system"] = Value::String(system);
     }
     if let Some(session_id) = session_id {
@@ -210,17 +259,51 @@ fn request_body(
     if !stream {
         body["max_tokens"] = json!(64);
     }
+    if tools.enabled.iter().any(|tool| tool == tools::WEB_SEARCH) {
+        body["provider"] = json!({"zdr": true});
+        if !tools.web_search_only.is_empty() {
+            body["provider"]["only"] = json!(tools.web_search_only);
+        }
+        body["tools"] = json!([{
+            "type": tools::WEB_SEARCH,
+            "parameters": {"engine": "native"}
+        }]);
+        body["max_tool_calls"] = json!(5);
+    } else if tools.enabled.iter().any(|tool| tool == tools::BASH) {
+        body["provider"] = json!({"zdr": true});
+        body["tools"] = json!([{
+            "type": tools::BASH,
+            "parameters": {
+                "engine": "openrouter",
+                "environment": {
+                    "type": "container_auto",
+                    "network_policy": {"type": "disabled"}
+                }
+            }
+        }]);
+        body["max_tool_calls"] = json!(10);
+    }
     body
 }
 
 #[derive(Default)]
 struct MessagesStreamParser {
     text_blocks: HashSet<i64>,
+    server_tools: HashMap<i64, ServerToolBlock>,
+    server_tool_inputs: HashMap<String, Value>,
     provider: Option<String>,
     generation_id: Option<String>,
     finish_reason: Option<String>,
     usage: Option<ProviderUsage>,
     completed: bool,
+}
+
+#[derive(Default)]
+struct ServerToolBlock {
+    id: String,
+    tool: String,
+    input_json: String,
+    initial_input: Value,
 }
 
 impl MessagesStreamParser {
@@ -249,14 +332,102 @@ impl MessagesStreamParser {
             }
             Some("content_block_start") => {
                 let index = value.get("index").and_then(Value::as_i64);
-                let block_type = value.pointer("/content_block/type").and_then(Value::as_str);
+                let block = value.get("content_block");
+                let block_type = block
+                    .and_then(|block| block.get("type"))
+                    .and_then(Value::as_str);
                 if let (Some(index), Some("text")) = (index, block_type) {
                     self.text_blocks.insert(index);
+                }
+                if let (Some(index), Some("server_tool_use")) = (index, block_type) {
+                    let block = block.expect("block type came from a content block");
+                    let tool = block
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let id = block
+                        .get("id")
+                        .or_else(|| block.get("tool_use_id"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("tool-{index}"));
+                    let initial_input = block.get("input").cloned().unwrap_or_else(|| json!({}));
+                    self.server_tools.insert(
+                        index,
+                        ServerToolBlock {
+                            id: id.clone(),
+                            tool: tool.to_owned(),
+                            input_json: String::new(),
+                            initial_input,
+                        },
+                    );
+                    if tool == tools::WEB_SEARCH {
+                        return Ok(Some(ProviderEvent::ToolStep(ToolStep {
+                            id,
+                            tool: tool.to_owned(),
+                            offset: 0,
+                            status: "running".into(),
+                            input: Some(json!({})),
+                            output: None,
+                        })));
+                    }
+                }
+                if let (Some(index), Some("openrouter_bash_tool_result")) = (index, block_type) {
+                    let block = block.expect("block type came from a content block");
+                    let content = block.get("content").unwrap_or(block);
+                    let id = block
+                        .get("tool_use_id")
+                        .or_else(|| block.get("id"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("tool-{index}"));
+                    let output = ToolStepOutput {
+                        stdout: content
+                            .get("stdout")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        stderr: content
+                            .get("stderr")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        exit_code: content
+                            .get("exitCode")
+                            .or_else(|| content.get("exit_code"))
+                            .and_then(Value::as_i64),
+                    };
+                    let input = self.server_tool_inputs.remove(&id).or_else(|| {
+                        content
+                            .get("command")
+                            .and_then(Value::as_str)
+                            .map(|command| json!({"command": command}))
+                    });
+                    return Ok(Some(ProviderEvent::ToolStep(ToolStep {
+                        id,
+                        tool: tools::BASH.to_owned(),
+                        offset: 0,
+                        status: "done".into(),
+                        input,
+                        output: Some(output),
+                    })));
                 }
             }
             Some("content_block_delta") => {
                 let index = value.get("index").and_then(Value::as_i64);
                 let delta = value.get("delta");
+                if let (Some(index), Some("input_json_delta")) = (
+                    index,
+                    delta
+                        .and_then(|delta| delta.get("type"))
+                        .and_then(Value::as_str),
+                ) && let Some(input) = delta
+                    .and_then(|delta| delta.get("partial_json"))
+                    .and_then(Value::as_str)
+                    && let Some(tool) = self.server_tools.get_mut(&index)
+                {
+                    tool.input_json.push_str(input);
+                }
                 if index.is_some_and(|index| self.text_blocks.contains(&index))
                     && delta
                         .and_then(|delta| delta.get("type"))
@@ -273,10 +444,51 @@ impl MessagesStreamParser {
                         generation_id: self.generation_id.clone(),
                     }));
                 }
+                if delta
+                    .and_then(|delta| delta.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("citations_delta")
+                    && let Some(citation) = delta.and_then(|delta| delta.get("citation"))
+                    && citation.get("type").and_then(Value::as_str)
+                        == Some("web_search_result_location")
+                    && let (Some(url), Some(title)) = (
+                        citation.get("url").and_then(Value::as_str),
+                        citation.get("title").and_then(Value::as_str),
+                    )
+                {
+                    if let Ok(url) = reqwest::Url::parse(url)
+                        && matches!(url.scheme(), "http" | "https")
+                    {
+                        return Ok(Some(ProviderEvent::Citation(Citation {
+                            url: url.to_string(),
+                            title: title.to_owned(),
+                        })));
+                    }
+                }
             }
             Some("content_block_stop") => {
                 if let Some(index) = value.get("index").and_then(Value::as_i64) {
                     self.text_blocks.remove(&index);
+                    if let Some(tool) = self.server_tools.remove(&index)
+                        && tool.tool == tools::BASH
+                    {
+                        let input = if tool.input_json.is_empty() {
+                            tool.initial_input
+                        } else {
+                            serde_json::from_str::<Value>(&tool.input_json)
+                                .unwrap_or(tool.initial_input)
+                        };
+                        self.server_tool_inputs
+                            .insert(tool.id.clone(), input.clone());
+                        return Ok(Some(ProviderEvent::ToolStep(ToolStep {
+                            id: tool.id,
+                            tool: tool.tool,
+                            offset: 0,
+                            status: "running".into(),
+                            input: Some(input),
+                            output: None,
+                        })));
+                    }
                 }
             }
             Some("message_delta") => {
@@ -311,6 +523,11 @@ fn merge_usage(old: Option<ProviderUsage>, new: Option<ProviderUsage>) -> Option
             reasoning_tokens: new.reasoning_tokens.or(old.reasoning_tokens),
             cache_read_tokens: new.cache_read_tokens.or(old.cache_read_tokens),
             cost: new.cost.or(old.cost),
+            upstream_inference_cost: new.upstream_inference_cost.or(old.upstream_inference_cost),
+            server_tool_cost: new.server_tool_cost.or(old.server_tool_cost),
+            web_search_requests: new.web_search_requests.or(old.web_search_requests),
+            tool_calls_requested: new.tool_calls_requested.or(old.tool_calls_requested),
+            tool_calls_executed: new.tool_calls_executed.or(old.tool_calls_executed),
         }),
     }
 }
@@ -335,6 +552,18 @@ fn parse_usage(value: &Value) -> Option<ProviderUsage> {
             .and_then(Value::as_i64),
         cache_read_tokens,
         cost: value.get("cost").and_then(Value::as_f64),
+        upstream_inference_cost: value
+            .pointer("/cost_details/upstream_inference_cost")
+            .and_then(Value::as_f64),
+        server_tool_cost: value
+            .pointer("/cost_details/server_tool_cost")
+            .and_then(Value::as_f64),
+        web_search_requests: value
+            .pointer("/server_tool_use/web_search_requests")
+            .or_else(|| value.get("web_search_requests"))
+            .and_then(Value::as_i64),
+        tool_calls_requested: value.get("tool_calls_requested").and_then(Value::as_i64),
+        tool_calls_executed: value.get("tool_calls_executed").and_then(Value::as_i64),
     })
 }
 
@@ -505,6 +734,7 @@ mod tests {
                     finish_reason,
                     usage,
                 } => done = Some((finish_reason, usage)),
+                ProviderEvent::Citation(_) | ProviderEvent::ToolStep(_) => {}
             }
         }
         assert_eq!(output, "You said: protocol check");

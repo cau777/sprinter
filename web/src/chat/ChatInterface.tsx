@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import {
   ActionBarPrimitive,
@@ -9,9 +9,9 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Copy, FileText, Image as ImageIcon, Paperclip, RotateCw, Sparkles, Square, X } from "lucide-react";
+import { ArrowUpRight, Copy, FileText, Globe, Image as ImageIcon, Paperclip, Plus, RotateCw, Sparkles, Square, SquareTerminal, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
-import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, switchBranch, watchMessage } from "../api/chats";
+import { cancelMessage, fetchChat, regenerateMessage, sendToChat, sendToNewChat, switchBranch, updateChat, watchMessage } from "../api/chats";
 import type { ChatDetail, ChatMessage, ChatSummary } from "../api/chats";
 import { ApiError } from "../api/client";
 import { fetchModels, fetchSettings } from "../api/settings";
@@ -22,13 +22,18 @@ import { deleteUpload, fetchPdfFile, storePdfText, uploadFile, type PdfTextStats
 import { extractPdfText, isPasswordProtectedPdfError, type ExtractedPdfText, pdfExtractionErrorMessage } from "../pdf/extractText";
 import { reportClientError } from "../clientErrors";
 import { useOnlineStatus } from "../api/useOnlineStatus";
-import { Button } from "@heroui/react";
+import { Button, Tooltip } from "@heroui/react";
 import { SelectField } from "../components/SelectField";
+import { WEB_SEARCH, BASH, toolLabel } from "./toolCatalog";
+import { useMessagePartText } from "@assistant-ui/react";
+import { MarkdownContent } from "./MarkdownText";
+import type { Citation, ToolStep } from "../api/types.gen";
 
 type Props = { chatId?: string; messageId?: string };
 type RuntimeMessage = ThreadMessageLike & { id: string; parentId: string | null; generationStatus: ChatMessage["status"]; error?: string | null; model?: string | null };
 type SendResult = { chatId: string; chat?: ChatSummary; user_message: ChatMessage; assistant_message: ChatMessage };
 type PendingUpload = { key: string; filename?: string; record?: UploadRecord | ChatMessage["attachments"][number]; progress: number; error?: string; uploading: boolean; persisted?: boolean; extracting?: boolean; pageProgress?: { page: number; pages: number }; extractedText?: ExtractedPdfText };
+const ToolMessageContext = createContext<ChatMessage | undefined>(undefined);
 
 function textOf(message: AppendMessage) {
   return message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
@@ -40,12 +45,40 @@ function applyMessageEvent(queryClient: ReturnType<typeof useQueryClient>, chatI
     void queryClient.invalidateQueries({ queryKey: ["chats"] });
     return;
   }
+  if (event.event === "done" && event.tool_fallback === true) {
+    void queryClient.invalidateQueries({ queryKey: ["models"] });
+  }
   queryClient.setQueryData<ChatDetail>(["chat", chatId], (current) => {
     if (!current) return current;
     return { ...current, messages: current.messages.map((message) => {
       if (message.id !== messageId) return message;
-      if (event.event === "snapshot") return { ...message, content: String(event.content ?? "") };
+      if (event.event === "snapshot") return {
+        ...message,
+        content: String(event.content ?? ""),
+        tools: (event.tools as string[] | undefined) ?? message.tools,
+        citations: (event.citations as Citation[] | undefined) ?? message.citations,
+        tool_steps: (event.tool_steps as ToolStep[] | undefined) ?? message.tool_steps,
+        web_search_requests: (event.web_search_requests as number | null | undefined) ?? message.web_search_requests,
+        tool_cost: (event.tool_cost as number | null | undefined) ?? message.tool_cost,
+        tool_fallback: Boolean(event.tool_fallback ?? message.tool_fallback),
+      };
       if (event.event === "delta") return { ...message, content: message.content + String(event.content ?? "") };
+      if (event.event === "citations") {
+        const incoming = (event.items as Citation[] | undefined) ?? [];
+        const current = message.citations ?? [];
+        const citations = [...current];
+        for (const citation of incoming) if (!citations.some((item) => item.url === citation.url)) citations.push(citation);
+        return { ...message, citations };
+      }
+      if (event.event === "tool_step") {
+        const step = event.step as ToolStep | undefined;
+        if (!step) return message;
+        const tool_steps = [...(message.tool_steps ?? [])];
+        const index = tool_steps.findIndex((item) => item.id === step.id);
+        if (index < 0) tool_steps.push(step);
+        else tool_steps[index] = step;
+        return { ...message, tool_steps };
+      }
       if (event.event === "done") {
         const usage = event.usage as { prompt_tokens?: number | null; completion_tokens?: number | null; reasoning_tokens?: number | null } | null | undefined;
         return {
@@ -56,6 +89,9 @@ function applyMessageEvent(queryClient: ReturnType<typeof useQueryClient>, chatI
           completion_tokens: usage?.completion_tokens ?? message.completion_tokens,
           reasoning_tokens: usage?.reasoning_tokens ?? message.reasoning_tokens,
           cost: (event.cost as number | null) ?? message.cost,
+          web_search_requests: (event.web_search_requests as number | null) ?? message.web_search_requests,
+          tool_cost: (event.tool_cost as number | null) ?? message.tool_cost,
+          tool_fallback: Boolean(event.tool_fallback ?? message.tool_fallback),
         };
       }
       if (event.event === "error") return { ...message, status: "error", error: String(event.message ?? "Generation failed") };
@@ -78,12 +114,33 @@ export function ChatInterface({ chatId, messageId }: Props) {
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [fileError, setFileError] = useState<string>();
   const [searchHighlight, setSearchHighlight] = useState<string | null>(null);
+  const [draftTools, setDraftTools] = useState<string[]>([]);
+  const [savingTools, setSavingTools] = useState(false);
   const handledSearchTarget = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const detail = chatQuery.data;
   const activeModel = modelQuery.data?.items.find((model) => model.id === (detail?.model ?? settingsQuery.data?.default_model));
   const canSendImages = (activeModel?.input_modalities ?? []).some((modality) => modality.toLowerCase() === "image");
   const canReadPdfs = (activeModel?.input_modalities ?? []).some((modality) => ["file", "pdf"].includes(modality.toLowerCase()));
+  const selectedTools = detail?.tools ?? draftTools;
+  const supportedTools = (activeModel?.tools ?? []).filter((tool) =>
+    tool.coverage !== "none" && (tool.id === WEB_SEARCH || tool.id === BASH),
+  );
+
+  const toggleTool = (id: string) => {
+    const next = selectedTools.includes(id) ? selectedTools.filter((tool) => tool !== id) : [id];
+    if (!chatId) {
+      setDraftTools(next);
+      return;
+    }
+    const previous = queryClient.getQueryData<ChatDetail>(["chat", chatId]);
+    queryClient.setQueryData<ChatDetail>(["chat", chatId], (current) => current ? { ...current, tools: next } : current);
+    setSavingTools(true);
+    void updateChat(chatId, { tools: next }).catch((error: unknown) => {
+      if (previous) queryClient.setQueryData(["chat", chatId], previous);
+      setDraftError(error instanceof ApiError ? error.message : "Could not save tool preferences.");
+    }).finally(() => setSavingTools(false));
+  };
 
   useEffect(() => {
     const media = window.matchMedia("(pointer: coarse)");
@@ -232,14 +289,14 @@ export function ChatInterface({ chatId, messageId }: Props) {
   };
 
   const send = useMutation({
-    mutationFn: async ({ content, parentId, attachmentIds }: { content: string; parentId: string | null; attachmentIds: string[] }): Promise<SendResult> => {
+    mutationFn: async ({ content, parentId, attachmentIds, tools }: { content: string; parentId: string | null; attachmentIds: string[]; tools: string[] }): Promise<SendResult> => {
       if (!navigator.onLine) throw new Error("You’re offline. Reconnect to send messages.");
       const request = async (): Promise<SendResult> => {
         if (chatId) {
           const response = await sendToChat(chatId, parentId, content, undefined, attachmentIds);
           return { chatId, user_message: response.user_message, assistant_message: response.assistant_message };
         }
-        const response = await sendToNewChat(content, undefined, attachmentIds);
+        const response = await sendToNewChat(content, undefined, attachmentIds, tools);
         return { chatId: response.chat.id, chat: response.chat, user_message: response.user_message, assistant_message: response.assistant_message };
       };
       try {
@@ -250,7 +307,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
         return request();
       }
     },
-    onSuccess: ({ chatId: nextChatId, chat, user_message, assistant_message }) => {
+    onSuccess: ({ chatId: nextChatId, chat, user_message, assistant_message }, variables) => {
       setDraftError(undefined);
       setPendingUploads([]);
       setFileError(undefined);
@@ -258,7 +315,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
         if (current) return { ...current, current_leaf_id: assistant_message.id, messages: [...current.messages, user_message, assistant_message] };
         const now = Date.now();
         return {
-          id: nextChatId, title: chat?.title ?? null, title_source: "auto", model: chat?.model ?? settingsQuery.data?.default_model ?? "", current_leaf_id: assistant_message.id, created_at: now, updated_at: now,
+          id: nextChatId, title: chat?.title ?? null, title_source: "auto", model: chat?.model ?? settingsQuery.data?.default_model ?? "", tools: variables.tools, current_leaf_id: assistant_message.id, created_at: now, updated_at: now,
           messages: [user_message, assistant_message],
         };
       });
@@ -278,7 +335,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
       return;
     }
     if (!content && !attachments.length) return;
-    send.mutate({ content, parentId, attachmentIds: attachments.map((item) => item.upload_id) });
+    send.mutate({ content, parentId, attachmentIds: attachments.map((item) => item.upload_id), tools: chatId ? [] : selectedTools });
   };
 
   const retry = useMutation({
@@ -406,13 +463,15 @@ export function ChatInterface({ chatId, messageId }: Props) {
             const user = message.role === "user";
             const editing = user && message.composer.isEditing;
             return <MessagePrimitive.Root key={message.id} className="chat-message mb-5 max-w-full border-b border-[rgba(120,160,220,.08)] px-0.5 pt-[19px] pb-4 data-[role=user]:ml-auto data-[role=user]:max-w-[88%] data-[role=user]:rounded-[14px] data-[role=user]:border data-[role=user]:border-[rgba(120,160,220,.11)] data-[role=user]:bg-[rgba(18,26,41,.65)] data-[role=user]:px-4 data-[role=user]:py-3.5 data-[role=assistant]:border-l-2 data-[role=assistant]:border-l-[var(--border)] data-[role=assistant]:pl-4 max-[720px]:data-[role=user]:max-w-[94%]" data-message-id={message.id} data-search-target={searchHighlight === message.id ? "true" : undefined} data-message-status={item?.generationStatus ?? "complete"} tabIndex={-1} data-role={message.role} data-running={!user && item?.generationStatus === "streaming" ? "true" : "false"}>
-              <div className="mb-2 font-mono text-[8px] tracking-[.13em] text-slate-500">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span className="ml-[7px] text-[var(--accent)]"> {message.content ? "STREAMING" : "THINKING…"}</span>}</div>
+              <div className="mb-2 font-mono text-[8px] tracking-[.13em] text-slate-500">{user ? "YOU" : "SPRINTER"}{!user && item?.generationStatus === "streaming" && <span className="ml-[7px] text-[var(--accent)]"> {message.content ? "STREAMING" : searchProgressLabel(original)}</span>}</div>
               {editing ? <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)]">
                 <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Edit message…" rows={2} disabled={!online} />
                 <UploadChips items={pendingUploads} onRemove={removeUpload} onRetry={retryPdfText} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} />
                 <div className="flex items-center justify-between"><Button variant="secondary" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online}><Paperclip size={14} /> Add files</Button><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">Press enter to save</span><div className="flex items-center gap-[9px]"><ComposerPrimitive.Cancel className="composer-action-danger" onClick={() => setPendingUploads([])}>Cancel</ComposerPrimitive.Cancel><ComposerPrimitive.Send className="composer-action-primary" aria-label="Save edited message" disabled={!online}><ArrowUpRight size={17} /></ComposerPrimitive.Send></div></div>
-              </ComposerPrimitive.Root> : <div className="chat-message-content"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div>}
+              </ComposerPrimitive.Root> : <div className="chat-message-content"><ToolMessageContext.Provider value={original}><MessagePrimitive.Parts components={{ Text: user ? MarkdownText : ToolAwareMarkdown }} /></ToolMessageContext.Provider></div>}
               {user && !editing && original?.attachments.length ? <UploadChips items={original.attachments.map((record) => ({ key: record.upload_id, record, progress: 100, uploading: false, persisted: true }))} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} /> : null}
+              {!user && original && <CitationChips citations={original.citations ?? []} />}
+              {!user && original?.tool_fallback && <div className="mt-2 rounded-md border border-amber-300/20 bg-amber-300/[.06] px-2 py-1.5 text-[10px] text-amber-100" role="status">Search was handled by a third-party engine.</div>}
               {!user && item?.generationStatus === "error" && <div className="mt-[9px] text-[10px] text-rose-300" role="alert">{item.error ?? "The response could not be completed."}</div>}
               {!user && ["cancelled", "interrupted"].includes(item?.generationStatus ?? "") && <div className="mt-2 text-[9px] text-slate-400">{item?.generationStatus === "cancelled" ? "Stopped" : "Interrupted"}. You can retry this response.</div>}
               <div className="chat-message-tools mt-[9px] flex items-center gap-[9px] text-slate-500">
@@ -430,14 +489,14 @@ export function ChatInterface({ chatId, messageId }: Props) {
                   <span>{branchIndex + 1} / {siblings.length}</span>
                   <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Next branch for message ${message.id}`} isDisabled={!online || branchIndex >= siblings.length - 1 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex + 1].id)}>›</Button>
                 </div>}
-                {!user && original && (original.prompt_tokens != null || original.completion_tokens != null || original.cost != null) && <span className="ml-auto whitespace-nowrap font-mono text-[8px] text-slate-500" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
+                {!user && original && hasFooterDetails(original) && <span className="ml-auto whitespace-nowrap font-mono text-[8px] text-slate-500" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
               </div>
             </MessagePrimitive.Root>;
           }}</ThreadPrimitive.Messages>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>}
-    {streamingMessage && !streamingMessage.content && <div className="chat-thinking" role="status">THINKING…</div>}
+    {streamingMessage && !streamingMessage.content && <div className="chat-thinking" role="status">{searchProgressLabel(streamingMessage)}</div>}
 
     <div className="mx-auto mt-auto w-full max-w-[710px] max-[720px]:mt-5">
       {draftError && <div className="mx-auto mb-2 max-w-[710px] rounded-lg border border-rose-400/20 bg-rose-400/[.04] px-2.5 py-2 text-[10px] text-rose-300" role="alert">{draftError}{draftError.toLowerCase().includes("api key") && <a className="ml-2 text-[var(--accent)]" href="/settings">Open Settings</a>}</div>}
@@ -448,7 +507,24 @@ export function ChatInterface({ chatId, messageId }: Props) {
         <ComposerPrimitive.Root className="relative w-full rounded-[15px] border border-[rgba(120,160,220,.17)] bg-[rgba(19,26,41,.82)] px-3.5 pt-3.5 pb-2.5 shadow-[0_10px_44px_rgba(61,232,255,.055),0_18px_60px_rgba(0,0,0,.17)] data-[disabled=true]:opacity-55 max-[720px]:px-[11px] max-[720px]:pt-[11px] max-[720px]:pb-2">
           <ComposerPrimitive.Input className="block min-h-[31px] max-h-[170px] w-full resize-none border-0 bg-transparent px-0.5 pb-2 text-[13px] text-[var(--text)] outline-none placeholder:text-slate-500" aria-label="Message" placeholder="Message Sprinter…" rows={1} submitMode={coarsePointer ? "ctrlEnter" : "enter"} disabled={!online || Boolean(streamingMessage) || send.isPending} />
           <UploadChips items={pendingUploads} onRemove={removeUpload} onRetry={retryPdfText} contextLength={activeModel?.context_length} modelName={activeModel?.name} canReadPdfs={canReadPdfs} />
-          <div className="flex items-center justify-between"><div className="flex items-center gap-[9px]"><Button variant="secondary" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</Button>{!chatId && <DefaultModelPicker isDisabled={!online} />}</div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-[7px]"><Button variant="secondary" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={14} /> Attach</Button>
+            {supportedTools.map((tool) => {
+              const enabled = selectedTools.includes(tool.id);
+              const incompatible = tool.id === WEB_SEARCH ? selectedTools.includes(BASH) : selectedTools.includes(WEB_SEARCH);
+              const title = tool.id === WEB_SEARCH
+                ? `Runs inside the selected provider under zero data retention routing. ~$0.01 per search.${incompatible ? " Can't be combined with Bash: search could run through a third-party engine." : ""}`
+                : "Runs commands in an OpenRouter sandbox with no internet access. Files persist within this chat. ~$0.003 per session start.";
+              const Icon = tool.id === WEB_SEARCH ? Globe : SquareTerminal;
+              return <Tooltip key={tool.id} delay={350}>
+                <Tooltip.Trigger><Button variant="ghost" className={`tool-pill ${enabled ? "tool-pill-on" : ""}`} aria-pressed={enabled} aria-label={`${toolLabel(tool.id)}${enabled ? " enabled" : " disabled"}`} isDisabled={!online || Boolean(streamingMessage) || send.isPending || savingTools} onPress={() => toggleTool(tool.id)}><Icon size={14} /><span className="max-[720px]:hidden">{toolLabel(tool.id)}</span></Button></Tooltip.Trigger>
+                <Tooltip.Content className="z-50 max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] px-2.5 py-2 text-[10px] leading-5 text-slate-200 shadow-xl">{title}</Tooltip.Content>
+              </Tooltip>;
+            })}
+            {(activeModel?.upstream_tools.length ?? 0) > 0 && <Tooltip delay={350}>
+              <Tooltip.Trigger><Button variant="ghost" className="tool-pill tool-pill-upstream" aria-disabled="true" aria-label={`Supported upstream but not by Sprinter: ${(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")}`}><Plus size={14} /></Button></Tooltip.Trigger>
+              <Tooltip.Content className="z-50 max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] px-2.5 py-2 text-[10px] leading-5 text-slate-200 shadow-xl">{(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")} are supported upstream but not by Sprinter</Tooltip.Content>
+            </Tooltip>}
+            {!chatId && <DefaultModelPicker isDisabled={!online || Boolean(streamingMessage)} />}</div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
         </ComposerPrimitive.Root>
       </AssistantRuntimeProvider>
       <p className="mt-2 mb-0 text-center text-[9px] text-slate-600">Sprinter can make mistakes. Check important information.</p>
@@ -542,13 +618,98 @@ function errorName(error: unknown) {
   return error instanceof Error ? error.name : "UnknownError";
 }
 
+function ToolAwareMarkdown() {
+  const part = useMessagePartText();
+  const text = part.text;
+  const message = useContext(ToolMessageContext);
+  const steps = (message?.tool_steps ?? [])
+    .filter((step) => step.tool === BASH)
+    .slice()
+    .sort((left, right) => left.offset - right.offset);
+  if (!steps.length) return <MarkdownContent text={text} />;
+  const chars = Array.from(text);
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  for (const step of steps) {
+    const offset = Math.max(cursor, Math.min(chars.length, step.offset));
+    parts.push(<MarkdownContent key={`${step.id}-before`} text={chars.slice(cursor, offset).join("")} />);
+    parts.push(<BashToolStep key={step.id} step={step} />);
+    cursor = offset;
+  }
+  parts.push(<MarkdownContent key="tool-step-tail" text={chars.slice(cursor).join("")} />);
+  return <>{parts}</>;
+}
+
+function BashToolStep({ step }: { step: ToolStep }) {
+  const command = typeof step.input === "object" && step.input !== null && "command" in step.input && typeof step.input.command === "string"
+    ? step.input.command
+    : "Bash command";
+  const exitCode = step.output?.exit_code;
+  return <details className="bash-tool-step">
+    <summary>
+      <span className="bash-tool-step-label">Ran</span>
+      <code title={command}>{command}</code>
+      {step.status === "running" ? <span className="bash-tool-status" role="status"><span className="tool-spinner" aria-hidden="true" /> Running</span>
+        : step.status === "error" ? <span className="bash-tool-status bash-tool-error">Stopped</span>
+          : <span className={`bash-tool-exit ${exitCode === 0 ? "" : "bash-tool-error"}`}>exit {exitCode ?? "?"}</span>}
+    </summary>
+    <div className="bash-tool-output">
+      {step.output?.stdout ? <pre aria-label="Command standard output">{step.output.stdout}</pre> : null}
+      {step.output?.stderr ? <pre className="bash-tool-stderr" aria-label="Command error output">{step.output.stderr}</pre> : null}
+      {!step.output && step.status === "running" && <span className="text-slate-400">Waiting for sandbox output…</span>}
+      {!step.output && step.status === "error" && <span className="text-slate-400">No output was returned.</span>}
+    </div>
+  </details>;
+}
+
+function CitationChips({ citations }: { citations: Citation[] }) {
+  if (!citations.length) return null;
+  return <div className="citation-chips" aria-label="Web search sources">
+    {citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noopener noreferrer" title={citation.title}>
+      <span>{citationDomain(citation.url)}</span><strong>{citation.title}</strong>
+    </a>)}
+  </div>;
+}
+
+function citationDomain(value: string) {
+  try { return new URL(value).hostname; } catch { return value; }
+}
+
+function searchProgressLabel(message?: ChatMessage) {
+  const count = (message?.tool_steps ?? []).filter((step) => step.tool === WEB_SEARCH && step.status === "running").length;
+  return count ? `SEARCHING… (${count})` : "THINKING…";
+}
+
+function hasFooterDetails(message: ChatMessage) {
+  return message.prompt_tokens != null
+    || message.completion_tokens != null
+    || message.cost != null
+    || message.tool_cost != null
+    || message.web_search_requests != null
+    || Boolean(message.tools?.length)
+    || Boolean(message.tool_steps?.length);
+}
 
 function usageSummary(message: ChatMessage) {
   const tokenCount = message.prompt_tokens != null || message.completion_tokens != null
     ? new Intl.NumberFormat().format((message.prompt_tokens ?? 0) + (message.completion_tokens ?? 0))
     : null;
   const cost = message.cost == null ? null : `$${message.cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
-  return [tokenCount == null ? null : `${tokenCount} tokens`, cost].filter(Boolean).join(" · ");
+  const enabled = message.tools ?? [];
+  const steps = message.tool_steps ?? [];
+  const details: string[] = [];
+  if (tokenCount) details.push(`${tokenCount} tokens`);
+  if (cost) details.push(cost);
+  if (enabled.includes(WEB_SEARCH)) {
+    const count = message.web_search_requests ?? steps.filter((step) => step.tool === WEB_SEARCH).length;
+    details.push(`Web search · ${count} ${count === 1 ? "search" : "searches"}`);
+  }
+  if (enabled.includes(BASH)) {
+    const count = steps.filter((step) => step.tool === BASH).length;
+    details.push(`Bash · ${count} ${count === 1 ? "command" : "commands"}`);
+  }
+  if (message.tool_cost != null) details.push(`$${message.tool_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} tool fees`);
+  return details.join(" · ");
 }
 
 function usageLabel(message: ChatMessage) {

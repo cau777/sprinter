@@ -1,0 +1,8 @@
+ALTER TABLE chats ADD COLUMN tools TEXT NOT NULL DEFAULT '[]';
+
+ALTER TABLE messages ADD COLUMN tools TEXT;
+ALTER TABLE messages ADD COLUMN citations TEXT;
+ALTER TABLE messages ADD COLUMN tool_steps TEXT;
+ALTER TABLE messages ADD COLUMN web_search_requests INTEGER;
+ALTER TABLE messages ADD COLUMN tool_cost REAL;
+ALTER TABLE messages ADD COLUMN tool_fallback INTEGER NOT NULL DEFAULT 0;

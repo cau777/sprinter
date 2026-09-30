@@ -213,6 +213,60 @@ button { color: inherit; }
 .chat-message-content p { margin: 0 0 12px; }
 .chat-message-content p:last-child { margin-bottom: 0; }
 .chat-message-content [data-part-type="text"] { white-space: pre-wrap; }
+.button.button--ghost.tool-pill {
+  display: inline-flex;
+  min-width: 0 !important;
+  min-height: 32px !important;
+  height: 32px !important;
+  gap: 6px !important;
+  border: 1px solid rgba(120,160,220,.2);
+  border-radius: 999px !important;
+  padding: 0 10px !important;
+  color: #aebbd0;
+  font-size: 11px !important;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.button.button--ghost.tool-pill:hover { border-color: rgba(61,232,255,.45); color: var(--accent); }
+.button.button--ghost.tool-pill.tool-pill-on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.button.button--ghost.tool-pill.tool-pill-upstream { width: 32px !important; padding: 0 !important; color: #8e9bb0; }
+.button.button--ghost.tool-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.citation-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.citation-chips a {
+  display: inline-flex;
+  max-width: min(100%, 420px);
+  align-items: baseline;
+  gap: 7px;
+  border: 1px solid rgba(120,160,220,.15);
+  border-radius: 7px;
+  padding: 4px 7px;
+  background: rgba(7,12,22,.4);
+  color: #c5d1e3;
+  font-size: 10px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+.citation-chips a:hover { border-color: var(--accent-line); color: var(--accent); }
+.citation-chips a span { flex: 0 0 auto; color: #8c9ab0; font: 9px "JetBrains Mono",monospace; }
+.citation-chips a strong { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.bash-tool-step { margin: 9px 0; border: 1px solid rgba(120,160,220,.17); border-radius: 8px; background: rgba(7,12,22,.45); color: #bbc8dc; font-size: 10px; }
+.bash-tool-step summary { display: flex; min-width: 0; align-items: center; gap: 8px; cursor: pointer; list-style: none; padding: 8px 10px; }
+.bash-tool-step summary::-webkit-details-marker { display: none; }
+.bash-tool-step summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 7px; }
+.bash-tool-step-label,.bash-tool-status,.bash-tool-exit { flex: 0 0 auto; color: #94a3b8; font: 9px "JetBrains Mono",monospace; }
+.bash-tool-step summary code { min-width: 0; overflow: hidden; color: #dbe6f5; font: 10px "JetBrains Mono",monospace; text-overflow: ellipsis; white-space: nowrap; }
+.bash-tool-status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--accent); }
+.bash-tool-exit { margin-left: auto; border: 1px solid rgba(120,160,220,.18); border-radius: 999px; padding: 1px 6px; }
+.bash-tool-error { color: #ff9aab !important; border-color: rgba(255,93,122,.28); }
+.tool-spinner { width: 10px; height: 10px; border: 1px solid rgba(61,232,255,.25); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.bash-tool-output { display: grid; gap: 6px; border-top: 1px solid rgba(120,160,220,.12); padding: 8px; }
+.bash-tool-output pre { overflow: auto; max-height: 320px; margin: 0; border-radius: 5px; padding: 8px; background: rgba(0,0,0,.28); color: #c9d6e8; font: 10px/1.6 "JetBrains Mono",monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bash-tool-output .bash-tool-stderr { color: #ffb4bf; }
+@keyframes spin { to { transform: rotate(360deg); } }
 @media (hover: hover) and (pointer: fine) {
   .chat-message[data-role="user"]:hover .chat-message-tools,
   .chat-message[data-role="user"]:focus-within .chat-message-tools { opacity: 1; }

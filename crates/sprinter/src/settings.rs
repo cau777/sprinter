@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
+    collections::HashMap,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -53,6 +54,14 @@ pub struct ApiModel {
     pub context_length: u64,
     pub pricing: ModelPricing,
     pub input_modalities: Vec<String>,
+    pub tools: Vec<ModelTool>,
+    pub upstream_tools: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ModelTool {
+    pub id: String,
+    pub coverage: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -234,6 +243,57 @@ pub async fn model_supports_files(state: &AppState, model: &str) -> Option<bool>
                 .iter()
                 .any(|modality| matches!(modality.to_ascii_lowercase().as_str(), "file" | "pdf"))
         })
+}
+
+pub async fn tool_request_config(
+    state: &AppState,
+    model: &str,
+    selected: &[String],
+) -> crate::openrouter::ToolRequestConfig {
+    if get_models_inner(state.settings.clone(), RefreshQuery { refresh: None })
+        .await
+        .is_err()
+    {
+        return crate::openrouter::ToolRequestConfig::default();
+    }
+    let cache = state.settings.models.lock().await;
+    let Some(cache) = cache.as_ref() else {
+        return crate::openrouter::ToolRequestConfig::default();
+    };
+    let Some(item) = cache.items.iter().find(|item| item.id == model) else {
+        return crate::openrouter::ToolRequestConfig::default();
+    };
+    let enabled = selected
+        .iter()
+        .filter(|id| {
+            item.tools
+                .iter()
+                .any(|tool| tool.id.as_str() == id.as_str() && tool.coverage != "none")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    crate::openrouter::ToolRequestConfig {
+        enabled,
+        web_search_only: Vec::new(),
+    }
+}
+
+pub async fn mark_web_search_fallback(state: &AppState, model: &str) {
+    let mut cache = state.settings.models.lock().await;
+    if let Some(cache) = cache.as_mut() {
+        if let Some(item) = cache.items.iter_mut().find(|item| item.id == model) {
+            item.tools
+                .retain(|tool| tool.id != crate::tools::WEB_SEARCH);
+            if !item
+                .upstream_tools
+                .iter()
+                .any(|id| id == crate::tools::WEB_SEARCH)
+            {
+                item.upstream_tools
+                    .push(crate::tools::WEB_SEARCH.to_owned());
+            }
+        }
+    }
 }
 
 /// Force a model catalog refresh for the background maintenance task.
@@ -545,12 +605,165 @@ async fn get_models_inner(
             "OpenRouter model response has no data array",
         )
     })?;
-    let items = upstream.iter().filter_map(parse_model).collect::<Vec<_>>();
+    let endpoints_response = state.http.get(state.base_url("endpoints/zdr")).send().await;
+    let (zdr_endpoints, zdr_available) = match endpoints_response {
+        Ok(response) if response.status().is_success() => match response.json::<Value>().await {
+            Ok(body) => match body.get("data").and_then(Value::as_array) {
+                Some(data) => (
+                    data.iter()
+                        .filter_map(parse_zdr_endpoint)
+                        .collect::<Vec<_>>(),
+                    true,
+                ),
+                None => {
+                    tracing::warn!(error = "missing data array", "ZDR endpoint catalog failed");
+                    (Vec::new(), false)
+                }
+            },
+            Err(error) => {
+                tracing::warn!(error = %error, "ZDR endpoint catalog failed");
+                (Vec::new(), false)
+            }
+        },
+        Ok(response) => {
+            tracing::warn!(status = %response.status(), "ZDR endpoint catalog failed");
+            (Vec::new(), false)
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "ZDR endpoint catalog failed");
+            (Vec::new(), false)
+        }
+    };
+    let items = upstream
+        .iter()
+        .filter_map(parse_model)
+        .map(|mut model| {
+            if !zdr_available {
+                return model;
+            }
+            let endpoints = zdr_endpoints
+                .iter()
+                .filter(|endpoint| endpoint.model_id == model.id)
+                .collect::<Vec<_>>();
+            let supports_tools = upstream
+                .iter()
+                .find(|value| value.get("id").and_then(Value::as_str) == Some(model.id.as_str()))
+                .and_then(|value| value.get("supported_parameters"))
+                .and_then(Value::as_array)
+                .is_some_and(|parameters| {
+                    parameters.iter().any(|item| item.as_str() == Some("tools"))
+                });
+
+            let search_endpoints = endpoints
+                .iter()
+                .filter(|endpoint| endpoint.has_native_search())
+                .collect::<Vec<_>>();
+            // Endpoint tags accepted by provider.only have not been verified. A
+            // partially covered model stays unavailable to prevent native search
+            // from silently routing through a third-party engine.
+            let search_coverage = (!endpoints.is_empty()
+                && search_endpoints.len() == endpoints.len())
+            .then_some("full");
+            let mut tools = Vec::new();
+            if let Some(coverage) = search_coverage {
+                tools.push(ModelTool {
+                    id: crate::tools::WEB_SEARCH.into(),
+                    coverage: coverage.into(),
+                });
+            }
+            if supports_tools && !endpoints.is_empty() {
+                tools.push(ModelTool {
+                    id: crate::tools::BASH.into(),
+                    coverage: "full".into(),
+                });
+            }
+            let mut upstream_tools = Vec::new();
+            if supports_tools {
+                if search_coverage.is_none() {
+                    upstream_tools.push(crate::tools::WEB_SEARCH.into());
+                }
+                if endpoints.is_empty() {
+                    upstream_tools.push(crate::tools::BASH.into());
+                }
+            }
+            if endpoints
+                .iter()
+                .any(|endpoint| endpoint.native_tools.contains_key("openrouter:apply_patch"))
+            {
+                upstream_tools.push("openrouter:apply_patch".into());
+            }
+            if supports_tools {
+                upstream_tools.extend(
+                    [
+                        "openrouter:advisor",
+                        "openrouter:subagent",
+                        "openrouter:image_generation",
+                        "openrouter:web_fetch",
+                        "openrouter:shell",
+                        "openrouter:fusion",
+                        "openrouter:experimental__search_models",
+                        "openrouter:tool_search",
+                    ]
+                    .into_iter()
+                    .map(str::to_owned),
+                );
+            }
+            model.tools = tools;
+            model.upstream_tools = upstream_tools;
+            model
+        })
+        .collect::<Vec<_>>();
+    let models_with_tools = items.iter().filter(|item| !item.tools.is_empty()).count();
+    if zdr_available {
+        tracing::info!(
+            endpoints = zdr_endpoints.len(),
+            models_with_tools,
+            "ZDR endpoint catalog refreshed"
+        );
+    }
     *cache = Some(CachedModels {
         loaded_at: Instant::now(),
         items: items.clone(),
     });
     Ok(Json(ModelsResponse { items }))
+}
+
+struct ZdrEndpoint {
+    model_id: String,
+    native_tools: HashMap<String, String>,
+}
+
+impl ZdrEndpoint {
+    fn has_native_search(&self) -> bool {
+        ["openrouter:web_search"]
+            .iter()
+            .filter_map(|id| self.native_tools.get(*id))
+            .any(|kind| matches!(kind.as_str(), "web_search" | "google_search"))
+    }
+}
+
+fn parse_zdr_endpoint(value: &Value) -> Option<ZdrEndpoint> {
+    let model_id = value.get("model_id")?.as_str()?.to_owned();
+    let native_tools = value
+        .get("native_tools")
+        .and_then(Value::as_object)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|(id, value)| {
+                    let kind = value
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .or_else(|| value.as_str())?;
+                    Some((id.clone(), kind.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ZdrEndpoint {
+        model_id,
+        native_tools,
+    })
 }
 
 fn parse_model(value: &Value) -> Option<ApiModel> {
@@ -592,6 +805,8 @@ fn parse_model(value: &Value) -> Option<ApiModel> {
         context_length,
         pricing: ModelPricing { prompt, completion },
         input_modalities,
+        tools: Vec::new(),
+        upstream_tools: Vec::new(),
     })
 }
 
@@ -986,7 +1201,7 @@ mod tests {
         let second = get_models_inner(state.clone(), RefreshQuery { refresh: None })
             .await
             .unwrap();
-        assert_eq!(first.0.items.len(), 4);
+        assert_eq!(first.0.items.len(), 5);
         assert_eq!(second.0.items[1].id, "test/vision");
         assert_eq!(
             request_log

@@ -4,6 +4,7 @@ use crate::{
     openrouter::{ChatMessage, OpenRouterClient, ProviderEvent, ProviderUsage},
     settings,
     state::AppState,
+    tools::{Citation, ToolStep},
 };
 use axum::{
     Json, Router,
@@ -58,6 +59,12 @@ struct Running {
 
 struct Buffer {
     content: String,
+    tools: Vec<String>,
+    citations: Vec<Citation>,
+    tool_steps: Vec<ToolStep>,
+    web_search_requests: Option<i64>,
+    tool_cost: Option<f64>,
+    tool_fallback: bool,
     terminal: Option<StreamEvent>,
 }
 
@@ -69,8 +76,20 @@ enum StopReason {
 
 pub struct Subscription {
     pub snapshot: String,
+    pub metadata: StreamSnapshot,
     pub initial: Option<StreamEvent>,
     pub events: broadcast::Receiver<StreamEvent>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StreamSnapshot {
+    pub content: String,
+    pub tools: Vec<String>,
+    pub citations: Vec<Citation>,
+    pub tool_steps: Vec<ToolStep>,
+    pub web_search_requests: Option<i64>,
+    pub tool_cost: Option<f64>,
+    pub tool_fallback: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -84,7 +103,14 @@ pub enum StreamEvent {
         finish_reason: Option<String>,
         usage: Option<StreamUsage>,
         cost: Option<f64>,
+        web_search_requests: Option<i64>,
+        tool_cost: Option<f64>,
+        tool_fallback: bool,
     },
+    #[serde(rename = "citations")]
+    Citations { items: Vec<Citation> },
+    #[serde(rename = "tool_step")]
+    ToolStep { step: ToolStep },
     #[serde(rename = "error")]
     Error { status: String, message: String },
     #[serde(rename = "title")]
@@ -96,6 +122,8 @@ impl StreamEvent {
         match self {
             Self::Delta { .. } => "delta",
             Self::Done { .. } => "done",
+            Self::Citations { .. } => "citations",
+            Self::ToolStep { .. } => "tool_step",
             Self::Error { .. } => "error",
             Self::Title { .. } => "title",
         }
@@ -140,7 +168,7 @@ async fn stream_message(
     let output = async_stream::stream! {
         let snapshot = Event::default()
             .event("snapshot")
-            .json_data(json!({"content": subscription.snapshot}))
+            .json_data(&subscription.metadata)
             .unwrap_or_else(|_| Event::default().event("snapshot").data("{}"));
         yield Ok::<Event, Infallible>(snapshot);
         if let Some(initial) = subscription.initial {
@@ -203,9 +231,22 @@ fn stream_event(event: StreamEvent) -> Event {
             finish_reason,
             usage,
             cost,
+            web_search_requests,
+            tool_cost,
+            tool_fallback,
         } => {
-            json!({"status": status, "finish_reason": finish_reason, "usage": usage, "cost": cost})
+            json!({
+                "status": status,
+                "finish_reason": finish_reason,
+                "usage": usage,
+                "cost": cost,
+                "web_search_requests": web_search_requests,
+                "tool_cost": tool_cost,
+                "tool_fallback": tool_fallback
+            })
         }
+        StreamEvent::Citations { items } => json!({"items": items}),
+        StreamEvent::ToolStep { step } => json!({"step": step}),
         StreamEvent::Error { status, message } => json!({"status": status, "message": message}),
         StreamEvent::Title { chat_id, title } => json!({"chat_id": chat_id, "title": title}),
     };
@@ -256,6 +297,22 @@ impl Manager {
     ) -> Result<(), GenerationError> {
         let assistant_id = prepared.assistant_message.id.clone();
         let chat_id = prepared.chat_id.clone();
+        let tools = prepared
+            .assistant_message
+            .tools
+            .clone()
+            .unwrap_or_else(|| "[]".into());
+        let stored = sqlx::query(
+            "UPDATE messages SET tools = ?, citations = NULL, tool_steps = NULL, web_search_requests = NULL, tool_cost = NULL, tool_fallback = 0 WHERE id = ? AND status = 'streaming'",
+        )
+        .bind(&tools)
+        .bind(&assistant_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| GenerationError::Internal)?;
+        if stored.rows_affected() == 0 {
+            return Err(GenerationError::NotFound);
+        }
         let session_id = ensure_chat_session_id(&self.pool, &chat_id)
             .await
             .map_err(|_| GenerationError::Internal)?;
@@ -267,6 +324,12 @@ impl Manager {
             chat_id: chat_id.clone(),
             buffer: RwLock::new(Buffer {
                 content: prepared.assistant_message.content.clone(),
+                tools: serde_json::from_str(&tools).unwrap_or_default(),
+                citations: Vec::new(),
+                tool_steps: Vec::new(),
+                web_search_requests: None,
+                tool_cost: None,
+                tool_fallback: false,
                 terminal: None,
             }),
             events,
@@ -294,6 +357,8 @@ impl Manager {
             gen = %assistant_id,
             chat = %chat_id,
             model = %prepared.model,
+            tools = %prepared.active_tools.join(","),
+            tz = prepared.timezone.as_deref().unwrap_or(""),
             started_by = started_by.as_deref().unwrap_or("")
         );
         let task = tokio::spawn(async move {
@@ -322,30 +387,66 @@ impl Manager {
             // Delta append+broadcast also holds this lock, so each delta appears in
             // either the snapshot or the receiver, without a gap or duplication.
             let buffer = running.buffer.write().expect("generation buffer poisoned");
-            let snapshot = buffer.content.clone();
+            let metadata = StreamSnapshot {
+                content: buffer.content.clone(),
+                tools: buffer.tools.clone(),
+                citations: buffer.citations.clone(),
+                tool_steps: buffer.tool_steps.clone(),
+                web_search_requests: buffer.web_search_requests,
+                tool_cost: buffer.tool_cost,
+                tool_fallback: buffer.tool_fallback,
+            };
             let initial = buffer.terminal.clone();
             let events = running.events.subscribe();
             return Ok(Subscription {
-                snapshot,
+                snapshot: metadata.content.clone(),
+                metadata,
                 initial,
                 events,
             });
         }
         drop(active);
-        let row = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<f64>)>(
-            "SELECT content, status, finish_reason, error, prompt_tokens, completion_tokens, reasoning_tokens, cost FROM messages WHERE id = ?",
+        let row = sqlx::query_as::<_, (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<f64>,
+            i64,
+        )>(
+            "SELECT content, status, finish_reason, error, prompt_tokens, completion_tokens, reasoning_tokens, cost, citations, tool_steps, tools, web_search_requests, tool_cost, tool_fallback FROM messages WHERE id = ?",
         )
         .bind(message_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|_| GenerationError::Internal)?
         .ok_or(GenerationError::NotFound)?;
+        let snapshot = StreamSnapshot {
+            content: row.0.clone(),
+            tools: crate::tools::decode_json_column(row.10.as_deref()),
+            citations: crate::tools::decode_json_column(row.8.as_deref()),
+            tool_steps: crate::tools::decode_json_column(row.9.as_deref()),
+            web_search_requests: row.11,
+            tool_cost: row.12,
+            tool_fallback: row.13 != 0,
+        };
         let initial = match row.1.as_str() {
             "complete" | "cancelled" | "interrupted" => Some(StreamEvent::Done {
                 status: row.1.clone(),
                 finish_reason: row.2,
                 usage: usage_from_values(row.4, row.5, row.6),
                 cost: row.7,
+                web_search_requests: row.11,
+                tool_cost: row.12,
+                tool_fallback: row.13 != 0,
             }),
             "error" => Some(StreamEvent::Error {
                 status: "error".into(),
@@ -356,7 +457,8 @@ impl Manager {
         let (sender, events) = broadcast::channel(1);
         drop(sender);
         Ok(Subscription {
-            snapshot: row.0,
+            snapshot: snapshot.content.clone(),
+            metadata: snapshot,
             initial,
             events,
         })
@@ -380,8 +482,33 @@ impl Manager {
     }
 
     pub async fn recover_interrupted(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
-        Ok(sqlx::query("UPDATE messages SET status = 'interrupted', error = 'Server restarted during generation', updated_at = ? WHERE status = 'streaming'")
-            .bind(now_ms()).execute(pool).await?.rows_affected())
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, tool_steps FROM messages WHERE status = 'streaming'",
+        )
+        .fetch_all(pool)
+        .await?;
+        let count = rows.len() as u64;
+        let mut tx = pool.begin().await?;
+        for (id, raw_steps) in rows {
+            let mut steps = crate::tools::decode_json_column::<Vec<ToolStep>>(raw_steps.as_deref());
+            let mut steps_changed = false;
+            for step in &mut steps {
+                if step.status == "running" {
+                    step.status = "error".into();
+                    steps_changed = true;
+                }
+            }
+            let steps =
+                steps_changed.then(|| serde_json::to_string(&steps).expect("tool steps serialize"));
+            sqlx::query("UPDATE messages SET status = 'interrupted', error = 'Server restarted during generation', tool_steps = COALESCE(?, tool_steps), updated_at = ? WHERE id = ? AND status = 'streaming'")
+                .bind(steps)
+                .bind(now_ms())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(count)
     }
 
     pub async fn shutdown(&self) {
@@ -465,12 +592,22 @@ impl Manager {
                     pdf_text = expanded.pdf_text,
                     pdf_native = expanded.pdf_native,
                     pdf_omitted = expanded.pdf_omitted,
+                    tools = ?prepared.active_tools,
+                    tz = prepared.timezone.as_deref().unwrap_or(""),
                     started_by = started_by.as_deref().unwrap_or(""),
                     "started"
                 );
                 tracing::debug!(chat = %prepared.chat_id, session_id = %session_id, "OpenRouter sticky session");
-                let messages = prompt_for_provider(instructions.as_deref(), &expanded.messages);
+                let messages = prompt_for_provider(
+                    instructions.as_deref(),
+                    &expanded.messages,
+                    prepared.timezone.as_deref(),
+                );
                 let native_pdf_fallback = expanded.needs_native_pdf_plugin();
+                let tool_config = crate::openrouter::ToolRequestConfig {
+                    enabled: prepared.active_tools.clone(),
+                    web_search_only: prepared.web_search_only.clone(),
+                };
                 tokio::select! {
                     changed = cancel_rx.changed() => {
                         if changed.is_ok() && cancel_rx.borrow().is_some() {
@@ -481,10 +618,10 @@ impl Manager {
                             }
                             None
                         } else {
-                            Some(self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback, &session_id).await)
+                            Some(self.client.stream_chat_with_tools(&key, &prepared.model, &messages, native_pdf_fallback, &session_id, &tool_config).await)
                         }
                     }
-                    result = self.client.stream_chat(&key, &prepared.model, &messages, native_pdf_fallback, &session_id) => Some(result)
+                    result = self.client.stream_chat_with_tools(&key, &prepared.model, &messages, native_pdf_fallback, &session_id, &tool_config) => Some(result)
                 }
             }
         };
@@ -502,6 +639,8 @@ impl Manager {
                 let mut finished = false;
                 let mut was_cancelled = false;
                 let mut first_token = false;
+                let mut provider_seen = None;
+                let mut tool_started = HashMap::<String, Instant>::new();
                 loop {
                     tokio::select! {
                         changed = cancel_rx.changed() => {
@@ -513,6 +652,7 @@ impl Manager {
                         _ = ticker.tick() => self.flush(&assistant_id, &running).await,
                         event = stream.next() => match event {
                             Some(Ok(ProviderEvent::Delta { content, provider, generation_id })) => {
+                                provider_seen = provider.clone().or(provider_seen);
                                 if !content.is_empty() && !first_token {
                                     first_token = true;
                                     tracing::info!(
@@ -525,6 +665,54 @@ impl Manager {
                                 let mut buffer = running.buffer.write().expect("generation buffer poisoned");
                                 buffer.content.push_str(&content);
                                 let _ = running.events.send(StreamEvent::Delta { content });
+                            }
+                            Some(Ok(ProviderEvent::Citation(citation))) => {
+                                let mut buffer = running.buffer.write().expect("generation buffer poisoned");
+                                if !buffer.citations.iter().any(|item| item.url == citation.url) {
+                                    tracing::debug!(citation_url = %citation.url, citation_title = %citation.title, "search citation received");
+                                    buffer.citations.push(citation.clone());
+                                    let _ = running.events.send(StreamEvent::Citations { items: vec![citation] });
+                                }
+                            }
+                            Some(Ok(ProviderEvent::ToolStep(mut step))) => {
+                                let now = Instant::now();
+                                let mut buffer = running.buffer.write().expect("generation buffer poisoned");
+                                if let Some(existing) = buffer.tool_steps.iter_mut().find(|item| item.id == step.id) {
+                                    step.offset = existing.offset;
+                                    *existing = step.clone();
+                                } else {
+                                    step.offset = buffer.content.chars().count();
+                                    buffer.tool_steps.push(step.clone());
+                                }
+                                if step.status == "running" {
+                                    tool_started.entry(step.id.clone()).or_insert(now);
+                                }
+                                let _ = running.events.send(StreamEvent::ToolStep { step: step.clone() });
+                                drop(buffer);
+                                if step.status == "done" {
+                                    let duration_ms = tool_started
+                                        .remove(&step.id)
+                                        .map(|started| started.elapsed().as_millis())
+                                        .unwrap_or_default();
+                                    let stdout_bytes = step.output.as_ref().map_or(0, |output| output.stdout.len());
+                                    let stderr_bytes = step.output.as_ref().map_or(0, |output| output.stderr.len());
+                                    let command_preview = step
+                                        .input
+                                        .as_ref()
+                                        .and_then(|input| input.get("command"))
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(|command| log_preview(command, 200));
+                                    tracing::info!(
+                                        tool = %step.tool,
+                                        exit_code = ?step.output.as_ref().and_then(|output| output.exit_code),
+                                        duration_ms,
+                                        stdout_bytes,
+                                        stderr_bytes,
+                                        command_preview = command_preview.as_deref().unwrap_or(""),
+                                        "tool step"
+                                    );
+                                    tracing::debug!(tool_step = ?step, "tool step details");
+                                }
                             }
                             Some(Ok(ProviderEvent::Done { finish_reason, usage })) => {
                                 final_reason = finish_reason;
@@ -549,8 +737,11 @@ impl Manager {
                     self.finish_cancelled(&assistant_id, &running).await;
                 } else if finished {
                     self.finish_complete(
+                        &app,
                         &assistant_id,
                         &prepared.model,
+                        &prepared.active_tools,
+                        provider_seen.as_deref(),
                         final_reason,
                         final_usage,
                         &running,
@@ -571,40 +762,46 @@ impl Manager {
     }
 
     async fn flush(&self, id: &str, running: &Running) {
-        let content = running
-            .buffer
-            .read()
-            .expect("generation buffer poisoned")
-            .content
-            .clone();
+        let (content, citations, tool_steps, web_search_requests, tool_cost, tool_fallback) = {
+            let buffer = running.buffer.read().expect("generation buffer poisoned");
+            (
+                buffer.content.clone(),
+                encode_optional_json(&buffer.citations),
+                encode_optional_json(&buffer.tool_steps),
+                buffer.web_search_requests,
+                buffer.tool_cost,
+                buffer.tool_fallback,
+            )
+        };
         if let Err(error) = sqlx::query(
-            "UPDATE messages SET content = ?, updated_at = ? WHERE id = ? AND status = 'streaming'",
+            "UPDATE messages SET content = ?, citations = ?, tool_steps = ?, web_search_requests = ?, tool_cost = ?, tool_fallback = ?, updated_at = ? WHERE id = ? AND status = 'streaming'",
         )
         .bind(content)
+        .bind(citations)
+        .bind(tool_steps)
+        .bind(web_search_requests)
+        .bind(tool_cost)
+        .bind(tool_fallback)
         .bind(now_ms())
         .bind(id)
         .execute(&self.pool)
-        .await
-        {
+        .await {
             tracing::error!(message_id = %id, error = %error, "could not flush generation content");
         }
     }
 
     async fn finish_complete(
         &self,
+        app: &AppState,
         id: &str,
         model: &str,
+        active_tools: &[String],
+        provider: Option<&str>,
         finish_reason: Option<String>,
         usage: Option<ProviderUsage>,
         running: &Running,
         duration_ms: u128,
     ) {
-        let content = running
-            .buffer
-            .read()
-            .expect("generation buffer poisoned")
-            .content
-            .clone();
         let (prompt, completion, reasoning, cost) =
             usage.as_ref().map_or((None, None, None, None), |usage| {
                 (
@@ -618,8 +815,66 @@ impl Manager {
             .as_ref()
             .and_then(|usage| usage.cache_read_tokens)
             .unwrap_or_default();
-        if let Err(error) = sqlx::query("UPDATE messages SET content = ?, status = 'complete', error = NULL, finish_reason = ?, prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, cost = ?, updated_at = ? WHERE id = ?")
-            .bind(&content).bind(&finish_reason).bind(prompt).bind(completion).bind(reasoning).bind(cost).bind(now_ms()).bind(id).execute(&self.pool).await
+        let web_search_requests = usage.as_ref().and_then(|usage| usage.web_search_requests);
+        let tool_cost = if active_tools.is_empty() {
+            None
+        } else {
+            usage.as_ref().and_then(derived_tool_cost)
+        };
+        let tool_fallback = active_tools
+            .iter()
+            .any(|tool| tool == crate::tools::WEB_SEARCH)
+            && usage.as_ref().is_some_and(search_fallback_usage);
+        if tool_fallback {
+            settings::mark_web_search_fallback(app, model).await;
+            tracing::warn!(
+                tool = crate::tools::WEB_SEARCH,
+                model,
+                provider = provider.unwrap_or(""),
+                tool_cost = tool_cost.unwrap_or_default(),
+                "tool fallback"
+            );
+        }
+
+        let (content, citations, tool_steps, tools, citation_count, tool_step_count) = {
+            let mut buffer = running.buffer.write().expect("generation buffer poisoned");
+            for step in &mut buffer.tool_steps {
+                if step.status == "running" {
+                    step.status = if step.tool == crate::tools::WEB_SEARCH {
+                        "done".into()
+                    } else {
+                        "error".into()
+                    };
+                    let _ = running
+                        .events
+                        .send(StreamEvent::ToolStep { step: step.clone() });
+                    if step.tool == crate::tools::WEB_SEARCH {
+                        tracing::info!(
+                            tool = %step.tool,
+                            exit_code = Option::<i64>::None,
+                            duration_ms = 0_u128,
+                            stdout_bytes = 0_usize,
+                            stderr_bytes = 0_usize,
+                            command_preview = "",
+                            "tool step"
+                        );
+                    }
+                }
+            }
+            buffer.web_search_requests = web_search_requests;
+            buffer.tool_cost = tool_cost;
+            buffer.tool_fallback = tool_fallback;
+            (
+                buffer.content.clone(),
+                encode_optional_json(&buffer.citations),
+                encode_optional_json(&buffer.tool_steps),
+                buffer.tools.clone(),
+                buffer.citations.len(),
+                buffer.tool_steps.len(),
+            )
+        };
+        if let Err(error) = sqlx::query("UPDATE messages SET content = ?, citations = ?, tool_steps = ?, web_search_requests = ?, tool_cost = ?, tool_fallback = ?, status = 'complete', error = NULL, finish_reason = ?, prompt_tokens = ?, completion_tokens = ?, reasoning_tokens = ?, cost = ?, updated_at = ? WHERE id = ?")
+            .bind(&content).bind(citations).bind(tool_steps).bind(web_search_requests).bind(tool_cost).bind(tool_fallback).bind(&finish_reason).bind(prompt).bind(completion).bind(reasoning).bind(cost).bind(now_ms()).bind(id).execute(&self.pool).await
         {
             tracing::error!(message_id = %id, error = %error, "could not persist completed generation");
         }
@@ -636,6 +891,11 @@ impl Manager {
             reasoning_tokens = reasoning.unwrap_or_default(),
             cache_read_tokens,
             cost = cost.unwrap_or_default(),
+            tools = ?tools,
+            web_search_requests = web_search_requests.unwrap_or_default(),
+            citations = citation_count,
+            tool_steps = tool_step_count,
+            tool_cost = tool_cost.unwrap_or_default(),
             subscribers,
             chars = content.chars().count(),
             preview,
@@ -650,6 +910,9 @@ impl Manager {
                 reasoning_tokens: usage.reasoning_tokens,
             }),
             cost,
+            web_search_requests,
+            tool_cost,
+            tool_fallback,
         };
         let mut buffer = running.buffer.write().expect("generation buffer poisoned");
         buffer.terminal = Some(event.clone());
@@ -657,22 +920,12 @@ impl Manager {
     }
 
     async fn finish_cancelled(&self, id: &str, running: &Running) {
-        let content = running
-            .buffer
-            .read()
-            .expect("generation buffer poisoned")
-            .content
-            .clone();
+        close_open_tool_steps(running);
+        let snapshot = capture_snapshot(running);
+        let content = snapshot.content.clone();
         let chars = content.chars().count();
         let preview = log_preview(&content, 200);
-        let _ = sqlx::query(
-            "UPDATE messages SET content = ?, status = 'cancelled', updated_at = ? WHERE id = ?",
-        )
-        .bind(content)
-        .bind(now_ms())
-        .bind(id)
-        .execute(&self.pool)
-        .await;
+        let _ = persist_partial_snapshot(&self.pool, id, &snapshot, "cancelled", None).await;
         tracing::info!(
             gen = %id,
             status = "cancelled",
@@ -685,6 +938,9 @@ impl Manager {
             finish_reason: None,
             usage: None,
             cost: None,
+            web_search_requests: snapshot.web_search_requests,
+            tool_cost: snapshot.tool_cost,
+            tool_fallback: snapshot.tool_fallback,
         };
         let mut buffer = running.buffer.write().expect("generation buffer poisoned");
         buffer.terminal = Some(event.clone());
@@ -692,19 +948,18 @@ impl Manager {
     }
 
     async fn finish_interrupted(&self, id: &str, running: &Running) {
-        let content = running
-            .buffer
-            .read()
-            .expect("generation buffer poisoned")
-            .content
-            .clone();
+        close_open_tool_steps(running);
+        let snapshot = capture_snapshot(running);
+        let content = snapshot.content.clone();
         let chars = content.chars().count();
         let preview = log_preview(&content, 200);
-        let _ = sqlx::query("UPDATE messages SET content = ?, status = 'interrupted', error = 'Server is shutting down', updated_at = ? WHERE id = ?")
-            .bind(content)
-            .bind(now_ms())
-            .bind(id)
-            .execute(&self.pool)
+        let _ = persist_partial_snapshot(
+            &self.pool,
+            id,
+            &snapshot,
+            "interrupted",
+            Some("Server is shutting down"),
+        )
         .await;
         tracing::warn!(
             gen = %id,
@@ -718,6 +973,9 @@ impl Manager {
             finish_reason: None,
             usage: None,
             cost: None,
+            web_search_requests: snapshot.web_search_requests,
+            tool_cost: snapshot.tool_cost,
+            tool_fallback: snapshot.tool_fallback,
         };
         let mut buffer = running.buffer.write().expect("generation buffer poisoned");
         buffer.terminal = Some(event.clone());
@@ -725,19 +983,18 @@ impl Manager {
     }
 
     async fn mark_interrupted(&self, running: &Running) {
-        let content = running
-            .buffer
-            .read()
-            .expect("generation buffer poisoned")
-            .content
-            .clone();
+        close_open_tool_steps(running);
+        let snapshot = capture_snapshot(running);
+        let content = snapshot.content.clone();
         let chars = content.chars().count();
         let preview = log_preview(&content, 200);
-        let _ = sqlx::query("UPDATE messages SET content = ?, status = 'interrupted', error = 'Server shutdown deadline expired', updated_at = ? WHERE id = ? AND status = 'streaming'")
-            .bind(content)
-            .bind(now_ms())
-            .bind(&running.id)
-            .execute(&self.pool)
+        let _ = persist_partial_snapshot(
+            &self.pool,
+            &running.id,
+            &snapshot,
+            "interrupted",
+            Some("Server shutdown deadline expired"),
+        )
         .await;
         tracing::warn!(
             gen = %running.id,
@@ -750,17 +1007,13 @@ impl Manager {
     }
 
     async fn finish_error(&self, id: &str, running: &Running, message: String) {
-        let content = running
-            .buffer
-            .read()
-            .expect("generation buffer poisoned")
-            .content
-            .clone();
+        close_open_tool_steps(running);
+        let snapshot = capture_snapshot(running);
+        let content = snapshot.content.clone();
         let chars = content.chars().count();
         let preview = log_preview(&content, 200);
         let error = log_preview(&message, 200);
-        let _ = sqlx::query("UPDATE messages SET content = ?, status = 'error', error = ?, updated_at = ? WHERE id = ?")
-            .bind(content).bind(&message).bind(now_ms()).bind(id).execute(&self.pool).await;
+        let _ = persist_partial_snapshot(&self.pool, id, &snapshot, "error", Some(&message)).await;
         tracing::warn!(
             gen = %id,
             status = "error",
@@ -777,6 +1030,75 @@ impl Manager {
         buffer.terminal = Some(event.clone());
         let _ = running.events.send(event);
     }
+}
+
+fn capture_snapshot(running: &Running) -> StreamSnapshot {
+    let buffer = running.buffer.read().expect("generation buffer poisoned");
+    StreamSnapshot {
+        content: buffer.content.clone(),
+        tools: buffer.tools.clone(),
+        citations: buffer.citations.clone(),
+        tool_steps: buffer.tool_steps.clone(),
+        web_search_requests: buffer.web_search_requests,
+        tool_cost: buffer.tool_cost,
+        tool_fallback: buffer.tool_fallback,
+    }
+}
+
+fn close_open_tool_steps(running: &Running) {
+    let mut buffer = running.buffer.write().expect("generation buffer poisoned");
+    for step in &mut buffer.tool_steps {
+        if step.status == "running" {
+            step.status = "error".into();
+            let _ = running
+                .events
+                .send(StreamEvent::ToolStep { step: step.clone() });
+        }
+    }
+}
+
+fn encode_optional_json<T: Serialize>(items: &[T]) -> Option<String> {
+    (!items.is_empty()).then(|| serde_json::to_string(items).expect("tool metadata serializes"))
+}
+
+async fn persist_partial_snapshot(
+    pool: &SqlitePool,
+    id: &str,
+    snapshot: &StreamSnapshot,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE messages SET content = ?, citations = ?, tool_steps = ?, web_search_requests = ?, tool_cost = ?, tool_fallback = ?, status = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'streaming'")
+        .bind(&snapshot.content)
+        .bind(encode_optional_json(&snapshot.citations))
+        .bind(encode_optional_json(&snapshot.tool_steps))
+        .bind(snapshot.web_search_requests)
+        .bind(snapshot.tool_cost)
+        .bind(snapshot.tool_fallback)
+        .bind(status)
+        .bind(error)
+        .bind(now_ms())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+fn derived_tool_cost(usage: &ProviderUsage) -> Option<f64> {
+    usage
+        .cost
+        .zip(usage.upstream_inference_cost)
+        .map(|(cost, upstream)| (cost - upstream).max(0.0))
+        .or(usage.server_tool_cost)
+}
+
+fn search_fallback_usage(usage: &ProviderUsage) -> bool {
+    usage.tool_calls_requested.unwrap_or_default() > 0
+        || usage.tool_calls_executed.unwrap_or_default() > 0
+        || usage
+            .cost
+            .zip(usage.upstream_inference_cost)
+            .is_some_and(|(cost, upstream)| cost - upstream > 0.000001)
 }
 
 fn log_preview(value: &str, max_chars: usize) -> String {
@@ -856,14 +1178,36 @@ fn spawn_title_task(
     })
 }
 
-fn prompt_for_provider(instructions: Option<&str>, prompt: &[ChatMessage]) -> Vec<ChatMessage> {
-    let mut messages = Vec::with_capacity(prompt.len() + usize::from(instructions.is_some()));
+fn prompt_for_provider(
+    instructions: Option<&str>,
+    prompt: &[ChatMessage],
+    timezone: Option<&str>,
+) -> Vec<ChatMessage> {
+    let mut system_parts = Vec::new();
     if let Some(instructions) = instructions.filter(|value| !value.trim().is_empty()) {
-        messages.push(ChatMessage {
-            role: "system".into(),
-            content: serde_json::Value::String(instructions.to_owned()),
-        });
+        system_parts.push(instructions.to_owned());
     }
+    match timezone {
+        Some(name) => match name.parse::<chrono_tz::Tz>() {
+            Ok(timezone) => {
+                let date = chrono::Utc::now().with_timezone(&timezone);
+                system_parts.push(format!(
+                    "Today's date for the user: {} (time zone {}).",
+                    date.format("%A, %Y-%m-%d"),
+                    name
+                ));
+            }
+            Err(_) => {
+                tracing::debug!(timezone = %name, "local date omitted because the time zone is invalid")
+            }
+        },
+        None => tracing::debug!("local date omitted because the time zone is missing"),
+    }
+    let mut messages = Vec::with_capacity(prompt.len() + 1);
+    messages.push(ChatMessage {
+        role: "system".into(),
+        content: serde_json::Value::String(system_parts.join("\n\n")),
+    });
     messages.extend_from_slice(prompt);
     messages
 }
@@ -912,7 +1256,7 @@ pub fn mark_interrupted_on_start(
 }
 
 pub async fn message_record(pool: &SqlitePool, id: &str) -> Result<MessageRecord, GenerationError> {
-    sqlx::query_as::<_, MessageRecord>("SELECT id, chat_id, parent_id, role, content, status, error, model, generation_id, finish_reason, prompt_tokens, completion_tokens, reasoning_tokens, cost, created_at, updated_at FROM messages WHERE id = ?")
+    sqlx::query_as::<_, MessageRecord>("SELECT id, chat_id, parent_id, role, content, status, error, model, generation_id, finish_reason, prompt_tokens, completion_tokens, reasoning_tokens, cost, tools, citations, tool_steps, web_search_requests, tool_cost, tool_fallback, created_at, updated_at FROM messages WHERE id = ?")
         .bind(id).fetch_optional(pool).await.map_err(|_| GenerationError::Internal)?.ok_or(GenerationError::NotFound)
 }
 
@@ -1197,6 +1541,7 @@ mod tests {
                     status = Some(final_status);
                 }
                 Ok(Ok(StreamEvent::Title { .. })) => {}
+                Ok(Ok(StreamEvent::Citations { .. } | StreamEvent::ToolStep { .. })) => {}
                 Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
                 Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {
                     panic!("subscriber lagged")

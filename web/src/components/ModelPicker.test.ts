@@ -3,8 +3,8 @@ import type { ApiModel } from "../api/settings";
 import { filterModels, filterModelsByQuickFilters } from "./ModelPicker";
 
 const models: ApiModel[] = [
-  { id: "openai/gpt-4.1", name: "GPT-4.1", created_at: null, context_length: 1_000_000, pricing: { prompt: "0", completion: "0" }, input_modalities: ["text"] },
-  { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", created_at: null, context_length: 200_000, pricing: { prompt: "0", completion: "0" }, input_modalities: ["text"] },
+  { id: "openai/gpt-4.1", name: "GPT-4.1", created_at: null, context_length: 1_000_000, pricing: { prompt: "0", completion: "0" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
+  { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4", created_at: null, context_length: 200_000, pricing: { prompt: "0", completion: "0" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
 ];
 
 describe("model picker search", () => {
@@ -23,11 +23,11 @@ describe("model picker search", () => {
 describe("model picker quick filters", () => {
   const now = Date.UTC(2026, 8, 28);
   const quickFilterModels: ApiModel[] = [
-    { id: "new/cheap", name: "New Cheap", created_at: Math.floor(Date.UTC(2026, 5, 1) / 1000), context_length: 100_000, pricing: { prompt: "0.0000004", completion: "0.000001" }, input_modalities: ["text"] },
-    { id: "new/expensive", name: "New Expensive", created_at: Date.UTC(2026, 6, 1), context_length: 100_000, pricing: { prompt: "0.0000006", completion: "0.000001" }, input_modalities: ["text"] },
-    { id: "new/limit", name: "At Price Limit", created_at: Math.floor(Date.UTC(2026, 6, 1) / 1000), context_length: 100_000, pricing: { prompt: "0.0000005", completion: "0.000001" }, input_modalities: ["text"] },
-    { id: "old/cheap", name: "Old Cheap", created_at: Math.floor(Date.UTC(2026, 2, 27) / 1000), context_length: 100_000, pricing: { prompt: "0.0000001", completion: "0.000001" }, input_modalities: ["text"] },
-    { id: "unknown/cheap", name: "Unknown Cheap", created_at: null, context_length: 100_000, pricing: { prompt: "0.0000001", completion: "0.000001" }, input_modalities: ["text"] },
+    { id: "new/cheap", name: "New Cheap", created_at: Math.floor(Date.UTC(2026, 5, 1) / 1000), context_length: 100_000, pricing: { prompt: "0.0000004", completion: "0.000001" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
+    { id: "new/expensive", name: "New Expensive", created_at: Date.UTC(2026, 6, 1), context_length: 100_000, pricing: { prompt: "0.0000006", completion: "0.000001" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
+    { id: "new/limit", name: "At Price Limit", created_at: Math.floor(Date.UTC(2026, 6, 1) / 1000), context_length: 100_000, pricing: { prompt: "0.0000005", completion: "0.000001" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
+    { id: "old/cheap", name: "Old Cheap", created_at: Math.floor(Date.UTC(2026, 2, 27) / 1000), context_length: 100_000, pricing: { prompt: "0.0000001", completion: "0.000001" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
+    { id: "unknown/cheap", name: "Unknown Cheap", created_at: null, context_length: 100_000, pricing: { prompt: "0.0000001", completion: "0.000001" }, input_modalities: ["text"], tools: [], upstream_tools: [] },
   ];
 
   it("shows models from the past six months by default and can turn that filter off", () => {

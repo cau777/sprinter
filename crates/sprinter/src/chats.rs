@@ -42,6 +42,7 @@ pub struct ChatDetail {
     pub title: Option<String>,
     pub title_source: String,
     pub model: String,
+    pub tools: Vec<String>,
     pub current_leaf_id: Option<String>,
     #[ts(type = "number")]
     pub created_at: i64,
@@ -56,6 +57,8 @@ pub enum ChatError {
     NotFound,
     #[error("invalid cursor")]
     InvalidCursor,
+    #[error("invalid chat tools")]
+    InvalidTools(crate::tools::ToolValidationError),
     #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(transparent)]
@@ -77,6 +80,7 @@ struct CreateChatRequest {
 struct UpdateChatRequest {
     title: Option<String>,
     model: Option<String>,
+    tools: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -191,12 +195,12 @@ async fn update_handler(
     headers: HeaderMap,
     Json(request): Json<UpdateChatRequest>,
 ) -> Result<Json<ChatSummary>, ChatApiError> {
-    if request.title.is_none() && request.model.is_none() {
+    if request.title.is_none() && request.model.is_none() && request.tools.is_none() {
         return Err(ChatApiError::new(
             &headers,
             StatusCode::BAD_REQUEST,
             "invalid_request",
-            "Provide a title or model to update",
+            "Provide a title, model, or tools to update",
         ));
     }
     Ok(Json(
@@ -205,6 +209,7 @@ async fn update_handler(
             &id,
             request.title.as_deref(),
             request.model.as_deref(),
+            request.tools,
         )
         .await
         .map_err(|e| ChatApiError::from_error(e, &headers))?,
@@ -272,6 +277,18 @@ impl ChatApiError {
                 "invalid_cursor",
                 "Cursor is invalid",
             ),
+            ChatError::InvalidTools(crate::tools::ToolValidationError::Unknown) => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "unknown_tool",
+                "One or more tools are not supported by Sprinter",
+            ),
+            ChatError::InvalidTools(crate::tools::ToolValidationError::Incompatible) => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "incompatible_tools",
+                "Web search and Bash cannot be enabled together",
+            ),
             _ => Self::internal(headers),
         }
     }
@@ -333,18 +350,20 @@ pub async fn get_chat_detail(pool: &SqlitePool, id: &str) -> Result<Option<ChatD
             Option<String>,
             String,
             String,
+            String,
             Option<String>,
             i64,
             i64,
         ),
     >(
-        "SELECT id, title, title_source, model, current_leaf_id, created_at, updated_at \
+        "SELECT id, title, title_source, model, tools, current_leaf_id, created_at, updated_at \
          FROM chats WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
     .await?;
-    let Some((id, title, title_source, model, current_leaf_id, created_at, updated_at)) = row
+    let Some((id, title, title_source, model, tools, current_leaf_id, created_at, updated_at)) =
+        row
     else {
         return Ok(None);
     };
@@ -354,6 +373,7 @@ pub async fn get_chat_detail(pool: &SqlitePool, id: &str) -> Result<Option<ChatD
         title,
         title_source,
         model,
+        tools: crate::tools::decode_json_column(Some(&tools)),
         current_leaf_id,
         created_at,
         updated_at,
@@ -383,15 +403,21 @@ pub async fn rename_chat(
     id: &str,
     title: Option<&str>,
     model: Option<&str>,
+    tools: Option<Vec<String>>,
 ) -> Result<ChatSummary, ChatError> {
+    if let Some(tools) = &tools {
+        crate::tools::validate_enabled_tools(tools).map_err(ChatError::InvalidTools)?;
+    }
+    let tools = tools.map(|tools| serde_json::to_string(&tools).expect("tool list serializes"));
     let result = sqlx::query(
         "UPDATE chats SET title = COALESCE(?, title), \
              title_source = CASE WHEN ? IS NULL THEN title_source ELSE 'manual' END, \
-             model = COALESCE(?, model), updated_at = ? WHERE id = ?",
+             model = COALESCE(?, model), tools = COALESCE(?, tools), updated_at = ? WHERE id = ?",
     )
     .bind(title)
     .bind(title)
     .bind(model)
+    .bind(tools)
     .bind(now_ms())
     .bind(id)
     .execute(pool)

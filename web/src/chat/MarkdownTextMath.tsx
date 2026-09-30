@@ -1,16 +1,16 @@
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
-import type { MarkdownTextPrimitiveProps } from "@assistant-ui/react-markdown";
+import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
 export default function MarkdownTextMath({
+  content,
   components,
-  componentsByLanguage,
 }: {
-  components: NonNullable<MarkdownTextPrimitiveProps["components"]>;
-  componentsByLanguage: NonNullable<MarkdownTextPrimitiveProps["componentsByLanguage"]>;
+  content: string;
+  components: NonNullable<Components>;
 }) {
-  return <MarkdownTextPrimitive remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components} componentsByLanguage={componentsByLanguage} defer smooth={false} />;
+  return <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components}>{content}</ReactMarkdown>;
 }

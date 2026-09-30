@@ -42,6 +42,7 @@ struct JsonChat<'a> {
     title: &'a Option<String>,
     title_source: &'a str,
     model: &'a str,
+    tools: &'a [String],
     current_leaf_id: &'a Option<String>,
     created_at: i64,
     updated_at: i64,
@@ -63,6 +64,12 @@ struct JsonMessage<'a> {
     completion_tokens: Option<i64>,
     reasoning_tokens: Option<i64>,
     cost: Option<f64>,
+    tools: Option<Vec<String>>,
+    citations: Option<Vec<crate::tools::Citation>>,
+    tool_steps: Option<Vec<crate::tools::ToolStep>>,
+    web_search_requests: Option<i64>,
+    tool_cost: Option<f64>,
+    tool_fallback: bool,
     created_at: i64,
     updated_at: i64,
     attachments: &'a [AttachmentMetadata],
@@ -155,6 +162,12 @@ fn json_export(
             completion_tokens: message.completion_tokens,
             reasoning_tokens: message.reasoning_tokens,
             cost: message.cost,
+            tools: decode_column(message.tools.as_deref()),
+            citations: decode_column(message.citations.as_deref()),
+            tool_steps: decode_column(message.tool_steps.as_deref()),
+            web_search_requests: message.web_search_requests,
+            tool_cost: message.tool_cost,
+            tool_fallback: message.tool_fallback,
             created_at: message.created_at,
             updated_at: message.updated_at,
             attachments: attachments
@@ -169,6 +182,7 @@ fn json_export(
             title: &chat.title,
             title_source: &chat.title_source,
             model: &chat.model,
+            tools: &chat.tools,
             current_leaf_id: &chat.current_leaf_id,
             created_at: chat.created_at,
             updated_at: chat.updated_at,
@@ -232,11 +246,9 @@ fn markdown(
         if let Some(model) = &message.model {
             output.push_str(&format!(" · {model}"));
         }
-        output.push_str(&format!(
-            " · {}\n\n{}\n",
-            iso_utc(message.created_at),
-            message.content
-        ));
+        output.push_str(&format!(" · {}\n\n", iso_utc(message.created_at)));
+        append_content_with_bash_steps(&mut output, message);
+        output.push('\n');
         if let Some(items) = attachments.get(&message.id) {
             for attachment in items {
                 output.push_str(&format!(
@@ -245,9 +257,125 @@ fn markdown(
                 ));
             }
         }
+        if let Some(citations) =
+            decode_column::<Vec<crate::tools::Citation>>(message.citations.as_deref())
+                .filter(|citations| !citations.is_empty())
+        {
+            output.push_str("\nSources:\n");
+            for citation in citations {
+                output.push_str(&format!(
+                    "- [{}](<{}>) · {}\n",
+                    markdown_escape(&citation.title),
+                    citation.url,
+                    citation_domain(&citation.url)
+                ));
+            }
+        }
         output.push('\n');
     }
     output
+}
+
+fn append_content_with_bash_steps(output: &mut String, message: &crate::messages::MessageRecord) {
+    let steps = decode_column::<Vec<crate::tools::ToolStep>>(message.tool_steps.as_deref())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|step| step.tool == crate::tools::BASH)
+        .collect::<Vec<_>>();
+    if steps.is_empty() {
+        output.push_str(&message.content);
+        output.push('\n');
+        return;
+    }
+    let chars = message.content.chars().collect::<Vec<_>>();
+    let mut cursor = 0;
+    for step in steps {
+        let offset = step.offset.min(chars.len()).max(cursor);
+        output.extend(chars[cursor..offset].iter());
+        if let Some(command) = step
+            .input
+            .as_ref()
+            .and_then(|input| input.get("command"))
+            .and_then(serde_json::Value::as_str)
+        {
+            if let Some(result) = step.output.as_ref() {
+                append_bash_block(
+                    output,
+                    command,
+                    &result.stdout,
+                    &result.stderr,
+                    result.exit_code,
+                );
+            } else {
+                append_bash_block(output, command, "", "", None);
+            }
+        }
+        cursor = offset;
+    }
+    output.extend(chars[cursor..].iter());
+    output.push('\n');
+}
+
+fn append_bash_block(
+    output: &mut String,
+    command: &str,
+    stdout: &str,
+    stderr: &str,
+    exit_code: Option<i64>,
+) {
+    let content = format!("{command}\n{stdout}\n{stderr}");
+    let fence_size = longest_backtick_run(&content).saturating_add(1).max(3);
+    let fence = "`".repeat(fence_size);
+    output.push_str(&format!("\n\n{fence}bash\n$ {command}\n"));
+    if !stdout.is_empty() {
+        output.push_str(stdout);
+        if !stdout.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    if !stderr.is_empty() {
+        output.push_str("stderr:\n");
+        output.push_str(stderr);
+        if !stderr.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+    if let Some(exit_code) = exit_code {
+        output.push_str(&format!("exit code: {exit_code}\n"));
+    }
+    output.push_str(&format!("{fence}\n\n"));
+}
+
+fn longest_backtick_run(value: &str) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+    for ch in value.chars() {
+        if ch == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
+}
+
+fn markdown_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('\r', " ")
+        .replace('\n', " ")
+}
+
+fn citation_domain(url: &str) -> &str {
+    url.split_once("://")
+        .map_or(url, |(_, rest)| rest.split('/').next().unwrap_or(rest))
+}
+
+fn decode_column<T: for<'de> serde::Deserialize<'de>>(value: Option<&str>) -> Option<T> {
+    value.and_then(|value| serde_json::from_str(value).ok())
 }
 
 fn title_case(value: &str) -> String {
@@ -393,6 +521,7 @@ mod tests {
             title: Some("Branch chat".into()),
             title_source: "auto".into(),
             model: "test/model".into(),
+            tools: Vec::new(),
             current_leaf_id: Some("visible-leaf".into()),
             created_at: 0,
             updated_at: 0,
@@ -444,6 +573,12 @@ mod tests {
             completion_tokens: None,
             reasoning_tokens: None,
             cost: None,
+            tools: None,
+            citations: None,
+            tool_steps: None,
+            web_search_requests: None,
+            tool_cost: None,
+            tool_fallback: false,
             created_at: 0,
             updated_at: 0,
             attachments: Vec::new(),

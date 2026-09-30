@@ -1,9 +1,9 @@
-import { Suspense, lazy, useEffect, useId, useState, type ComponentPropsWithoutRef } from "react";
+import { Suspense, lazy, useDeferredValue, useEffect, useId, useState, type ComponentPropsWithoutRef } from "react";
 import { Button } from "@heroui/react";
 import { useMessagePartText, useAuiState } from "@assistant-ui/react";
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import type { CodeHeaderProps, SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
 import type { Components } from "react-markdown";
+import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const MathMarkdown = lazy(() => import("./MarkdownTextMath"));
@@ -53,6 +53,7 @@ function highlighterFor(language: string) {
 function CopyCode({ language, code }: CodeHeaderProps) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
+    setCopied(true);
     const fallback = () => {
       const field = document.createElement("textarea");
       field.value = code;
@@ -63,15 +64,15 @@ function CopyCode({ language, code }: CodeHeaderProps) {
       document.execCommand("copy");
       field.remove();
     };
-    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(code).catch(fallback);
-    else fallback();
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
+    try {
+      if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(code).catch(fallback);
+      else fallback();
+    } catch {
+      fallback();
+    }
+    window.setTimeout(() => setCopied(false), 1800);
   };
-  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><Button variant="ghost" className="rounded px-2 py-1 font-mono text-[9px] text-slate-300 hover:bg-white/10" onPress={() => {
-    setCopied(true);
-    copy();
-  }}>{copied ? "Copied" : "Copy"}</Button></div>;
+  return <div className="markdown-code-header"><span>{language ?? "CODE"}</span><Button variant="ghost" className="rounded px-2 py-1 font-mono text-[9px] text-slate-300 hover:bg-white/10" onPress={copy}>{copied ? "Copied" : "Copy"}</Button></div>;
 }
 
 function SafeLink({ children, href, ...props }: ComponentPropsWithoutRef<"a">) {
@@ -114,13 +115,42 @@ function MermaidDiagram({ components: { Pre }, code }: SyntaxHighlighterProps) {
   return <div className="mermaid-diagram" role="img" aria-label="Mermaid diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-const baseComponents = { CodeHeader: CopyCode, SyntaxHighlighter: HighlightedCode, a: SafeLink } satisfies NonNullable<Components> & { CodeHeader: typeof CopyCode; SyntaxHighlighter: typeof HighlightedCode };
+const codeComponents = {
+  Pre: ({ children }: ComponentPropsWithoutRef<"pre">) => <pre>{children}</pre>,
+  Code: ({ children, className }: ComponentPropsWithoutRef<"code">) => <code className={className}>{children}</code>,
+};
+
+function MarkdownCode({ className, children }: ComponentPropsWithoutRef<"code">) {
+  const raw = String(children);
+  const code = raw.replace(/\n$/, "");
+  const language = /language-([^\s]+)/.exec(className ?? "")?.[1];
+  const block = Boolean(language) || raw.endsWith("\n");
+  if (!block) return <code className={className}>{children}</code>;
+  if (language === "mermaid") {
+    return <MermaidDiagram components={codeComponents} language="mermaid" code={code} />;
+  }
+  return <div className="markdown-code-block">
+    <CopyCode language={language} code={code} />
+    <HighlightedCode components={codeComponents} language={language ?? "text"} code={code} />
+  </div>;
+}
+
+const baseComponents = {
+  a: SafeLink,
+  code: MarkdownCode,
+  pre: ({ children }: ComponentPropsWithoutRef<"pre">) => <>{children}</>,
+} satisfies NonNullable<Components>;
+
+export function MarkdownContent({ text }: { text: string }) {
+  const deferredText = useDeferredValue(text);
+  const hasMath = /(?:\$\$?[\s\S]+?\$\$?|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/.test(deferredText);
+  const fallback = <ReactMarkdown remarkPlugins={[remarkGfm]} components={baseComponents}>{deferredText}</ReactMarkdown>;
+  return hasMath
+    ? <Suspense fallback={fallback}><MathMarkdown content={deferredText} components={baseComponents} /></Suspense>
+    : fallback;
+}
 
 export function MarkdownText() {
   const text = useMessagePartText();
-  const hasMath = /(?:\$\$?[\s\S]+?\$\$?|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\])/.test(text.text);
-  const componentsByLanguage = { mermaid: { SyntaxHighlighter: MermaidDiagram } };
-  return hasMath
-    ? <Suspense fallback={<MarkdownTextPrimitive remarkPlugins={[remarkGfm]} components={baseComponents} componentsByLanguage={componentsByLanguage} defer smooth={false} />}><MathMarkdown components={baseComponents} componentsByLanguage={componentsByLanguage} /></Suspense>
-    : <MarkdownTextPrimitive remarkPlugins={[remarkGfm]} components={baseComponents} componentsByLanguage={componentsByLanguage} defer smooth={false} />;
+  return <MarkdownContent text={text.text} />;
 }
