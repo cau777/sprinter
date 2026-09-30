@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => {
       pdfAssets,
       VitePWA({
         registerType: "prompt",
-        includeAssets: ["sprinter.svg", "sprinter-maskable.svg"],
+        includeAssets: ["sprinter.svg", "sprinter-maskable.svg", "apple-touch-icon.png"],
         manifest: {
           name: "Sprinter",
           short_name: "Sprinter",
@@ -44,6 +44,9 @@ export default defineConfig(({ mode }) => {
           display: "standalone",
           start_url: "/",
           icons: [
+            { src: "/sprinter-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+            { src: "/sprinter-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+            { src: "/sprinter-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
             { src: "/sprinter.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
             { src: "/sprinter-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
           ],

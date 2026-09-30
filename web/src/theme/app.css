@@ -143,8 +143,3 @@ button { color: inherit; }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 
 .markdown-highlight pre,.chat-message-content pre { overflow-x: auto; margin: 0 0 12px; border: 1px solid rgba(120,160,220,.16); border-radius: 0 0 8px 8px; padding: 12px; background: #101827 !important; font: 11px/1.65 "JetBrains Mono",monospace; }
-
-/*
-DO NOT ADD MORE CSS CLASSES UNLESS STRICTLY NECESSARY
-PREFERE TAILWIND INSTEAD
-/*
