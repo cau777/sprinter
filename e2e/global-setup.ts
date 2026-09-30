@@ -8,11 +8,12 @@ export default async function globalSetup() {
   const browser = await chromium.launch();
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto("http://127.0.0.1:8080/");
+  const baseUrl = process.env.SPRINTER_E2E_BASE_URL ?? "http://127.0.0.1:8080";
+  await page.goto(`${baseUrl}/`);
   await expect(page.getByRole("heading", { name: "Good to have you back." })).toBeVisible();
   await page.getByLabel("Password").fill("test");
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByText("Local and private")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bring your own key." })).toBeVisible();
   const configured = await page.evaluate(async () => {
     const response = await fetch("/api/settings", {
       method: "PATCH",
@@ -22,7 +23,7 @@ export default async function globalSetup() {
     return response.ok;
   });
   expect(configured).toBeTruthy();
-  await page.goto("http://127.0.0.1:8080/");
+  await page.goto(`${baseUrl}/`);
   await expect(page.getByRole("heading", { name: "What’s on your mind?" })).toBeVisible();
   await context.storageState({ path: statePath });
   await browser.close();
