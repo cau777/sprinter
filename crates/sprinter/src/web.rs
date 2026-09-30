@@ -71,7 +71,9 @@ async fn request_id(mut request: Request, next: Next) -> Response {
     // Read the declared length only. In particular, do not consume or buffer uploads
     // or request streams just to measure them.
     let req_bytes = content_length(request.headers());
-    let is_upload = route == "/api/uploads" || route == "/api/uploads/{id}";
+    let is_upload = route == "/api/uploads"
+        || route == "/api/uploads/{id}"
+        || route == "/api/uploads/{id}/text";
     let is_sse_route = route == "/api/messages/{id}/stream";
     request.headers_mut().insert(
         HeaderName::from_static("x-request-id"),
@@ -163,6 +165,7 @@ fn route_template(path: &str) -> &'static str {
                 ["api", "messages", id, "regenerate"] if !id.is_empty() => {
                     "/api/messages/{id}/regenerate"
                 }
+                ["api", "uploads", id, "text"] if !id.is_empty() => "/api/uploads/{id}/text",
                 ["api", "uploads", id] if !id.is_empty() => "/api/uploads/{id}",
                 ["api", ..] => "/api/{path}",
                 _ => "/{asset}",
@@ -212,7 +215,7 @@ async fn spa_fallback(uri: Uri) -> Response {
 fn mime_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
         "html" => "text/html; charset=utf-8",
-        "js" => "text/javascript; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "svg" => "image/svg+xml",
         "png" => "image/png",

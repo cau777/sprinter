@@ -6,8 +6,8 @@ Status: **Decided**
 
 | Kind | Examples | How it reaches the model |
 |---|---|---|
-| Images | png, jpg, webp, gif | Sent as OpenRouter `image_url` content parts (base64 data URL). Only offered when the selected model supports image input. |
-| PDFs | pdf | **Superseded by [14-pdf-text.md](14-pdf-text.md):** text is extracted in the browser and sent as a text part. Previously: sent as an OpenRouter `file` content part. OpenRouter parses PDFs for any model through its `file-parser` plugin. Engines: `cloudflare-ai` (free, PDF→markdown), `mistral-ocr` (paid, for scans), and `native` (models with built-in PDF support, billed as input tokens). The plugin accepts one engine per request, so the Settings default or a single composer override applies to all uncached PDFs in the prompt. `message_attachments.pdf_engine` records the engine requested when each PDF was attached. The effective engine override is sent in the message request. |
+| Images | png, jpg, webp, gif | Sent as Messages API `image` blocks with base64 sources. Only offered when the selected model supports image input. |
+| PDFs | pdf | See [14-pdf-text.md](14-pdf-text.md): extracted text is sent as text; scans can use a Messages API `document` block with the native parser when the model supports file input. |
 | Text and code | txt, md, csv, json, source files | Inlined into the user message as a fenced block labeled with the filename. No provider-side file support is needed. |
 
 Office documents (docx/xlsx/pptx) are **out of scope** for v1.
@@ -34,17 +34,15 @@ INSERT uploads(id, sha256, filename, mime, kind, size, created_at)
    ▼
 client shows a chip or thumbnail in the composer and holds the upload id
    │
-POST /api/chats/:id/messages { content, attachment_ids: [...], pdf_engine? }
-   → message_attachments(message_id, upload_id) rows; each PDF records the selected engine
+POST /api/chats/:id/messages { content, attachment_ids: [...] }
+  → message_attachments(message_id, upload_id) rows
    │
    ▼
 on each generation, the server rebuilds the prompt from the branch path:
    for every attachment on every message in the path:
-     image → read file, base64 → image_url part
-     pdf   → read file, base64 → file part (+ cached parse annotations, see below)
+     image → read file, base64 → Messages API image block
+     pdf   → extracted text, or a Messages API document block for a supported scan
      text  → read file → fenced text block
-   select one file-parser engine for this request: request override, else Settings default
-   apply that engine to every uncached PDF included in the prompt
 ```
 
 ## Client-side rules
@@ -86,7 +84,7 @@ and integrity for free.
 | Limit | Value | Reason |
 |---|---|---|
 | Image | 20 MB after client downscale | These are usually under 1 MB after downscale anyway |
-| PDF | 50 MB | Base64 adds 33%, so ~67 MB of transient memory per request in the worst case |
+| PDF | 50 MB | Scanned-PDF fallback base64 adds 33%, so ~67 MB of transient memory per request in the worst case |
 | Text / code | 1 MB | About 250k tokens, already more than most context windows |
 | Files per message | 10 | |
 | Total attachments in a single outgoing prompt | 100 MB raw | Bounds peak memory while building the OpenRouter request |
@@ -97,17 +95,14 @@ Separately, the typed content of a message is capped at 256 KB.
 
 ## Cost and repeated re-sending
 
-Chat requests can only take attachments inline (base64 `image_url` / `file.file_data`, or
-a public URL, which isn't usable for a private server). So **every** request re-sends
-every attachment that appears in the branch path. This matters in two ways:
+Messages API requests carry attachments inline (base64 `image` / `document` blocks, or a
+public URL, which isn't usable for a private server). So **every** request re-sends every
+attachment that appears in the branch path. This matters in two ways:
 
 - **Tokens:** images and PDFs are billed again on every turn, just as they are in any
   chat UI. Prompt caching at providers that support it softens this.
-- **PDF parsing** (superseded by [14-pdf-text.md](14-pdf-text.md)): OpenRouter returns file `annotations` with the parsed PDF content.
-  We store them in `message_attachments.parse_cache` and send them back on later turns,
-  so OpenRouter skips re-parsing. This matters for the paid `mistral-ocr` engine.
-  Annotation shape (from the OpenRouter PDF guide):
-  `{"type":"file","file":{"hash":…,"name":…,"content":[{"type":"text",…},{"type":"image_url",…}]}}`.
+- **PDF parsing:** extracted text is stored alongside the upload and reused on later
+  turns. See [14-pdf-text.md](14-pdf-text.md) for the scan fallback.
 
 ## OpenRouter Files API: evaluated, not used in v1
 
@@ -153,13 +148,5 @@ Possible v2 uses:
   sweep).
 - A periodic sweep (hourly) runs both of these and also removes stale `tmp/` files.
 
-## OpenRouter PDF protocol spike (2026-09-25)
-
-The current official [PDF Inputs guide](https://openrouter.ai/docs/guides/overview/multimodal/pdfs.md)
-uses `plugins: [{id: "file-parser", pdf: {engine: "cloudflare-ai"}}]`; the supported
-engines are `cloudflare-ai`, `mistral-ocr`, and `native`. The engine is a request-level
-plugin option, not a field on an individual `file` content part. PDF annotations appear
-in non-streaming assistant messages as `choices[0].message.annotations`, and parsed
-annotations from provider failures appear at `error.metadata.file_annotations`. The
-current docs do not specify annotations on streaming responses; the planned cache needs
-an implementation spike before it can rely on the streaming reply to provide them.
+The earlier Chat Completions PDF protocol spike and parse-cache design were superseded by
+[14-pdf-text.md](14-pdf-text.md) and [15-messages-api-migration.md](15-messages-api-migration.md).

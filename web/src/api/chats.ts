@@ -3,11 +3,13 @@ import type {
   ChatDetail as GeneratedChatDetail,
   ChatPage,
   ChatSummary,
+  Citation,
   MessageRecord,
   NewChatMessageResponse,
   RegenerateMessageResponse,
   SendMessageResponse,
   SwitchBranchResponse,
+  ToolStep,
 } from "./types.gen";
 
 export type { ChatPage, ChatSummary };
@@ -21,8 +23,11 @@ export type NewChatResponse = Omit<NewChatMessageResponse, "user_message" | "ass
 export type ExistingChatResponse = Omit<SendMessageResponse, "user_message" | "assistant_message"> & { user_message: ChatMessage; assistant_message: ChatMessage };
 export type RetryResponse = Omit<RegenerateMessageResponse, "assistant_message"> & { assistant_message: ChatMessage };
 export type StreamEvent =
-  | { event: "snapshot" | "delta"; content: string }
-  | { event: "done"; status: ChatMessage["status"]; finish_reason?: string | null; usage?: { prompt_tokens?: number | null; completion_tokens?: number | null; reasoning_tokens?: number | null } | null; cost?: number | null }
+  | { event: "snapshot"; content: string; tools?: string[]; citations?: Citation[]; tool_steps?: ToolStep[]; web_search_requests?: number | null; tool_cost?: number | null; tool_fallback?: boolean }
+  | { event: "delta"; content: string }
+  | { event: "citations"; items: Citation[] }
+  | { event: "tool_step"; step: ToolStep }
+  | { event: "done"; status: ChatMessage["status"]; finish_reason?: string | null; usage?: { prompt_tokens?: number | null; completion_tokens?: number | null; reasoning_tokens?: number | null } | null; cost?: number | null; web_search_requests?: number | null; tool_cost?: number | null; tool_fallback?: boolean }
   | { event: "error"; status?: "error"; message: string }
   | { event: "title"; chat_id: string; title: string };
 
@@ -36,25 +41,26 @@ export const fetchChat = async (id: string): Promise<ChatDetail> => {
   const chat = await apiRequest<GeneratedChatDetail>(`/api/chats/${encodeURIComponent(id)}`);
   return { ...chat, messages: chat.messages.map(asMessage) };
 };
-export const updateChat = (id: string, patch: { title?: string; model?: string }) =>
+export const updateChat = (id: string, patch: { title?: string; model?: string; tools?: string[] }) =>
   apiRequest<ChatSummary>(`/api/chats/${encodeURIComponent(id)}`, { method: "PATCH", body: jsonBody(patch) });
 export const deleteChat = (id: string) => apiRequest<void>(`/api/chats/${encodeURIComponent(id)}`, { method: "DELETE" });
-export const sendToNewChat = async (content: string, model?: string, attachmentIds: string[] = [], pdfEngine?: string): Promise<NewChatResponse> => {
+const browserTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+export const sendToNewChat = async (content: string, model?: string, attachmentIds: string[] = [], tools: string[] = []): Promise<NewChatResponse> => {
   const result = await apiRequest<NewChatMessageResponse>("/api/chats/new/messages", {
   method: "POST",
-  body: jsonBody({ parent_id: null, content, attachment_ids: attachmentIds, ...(model ? { model } : {}), ...(pdfEngine ? { pdf_engine: pdfEngine } : {}) }),
+  body: jsonBody({ parent_id: null, content, attachment_ids: attachmentIds, timezone: browserTimezone(), tools, ...(model ? { model } : {}) }),
   });
   return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
 };
-export const sendToChat = async (id: string, parent_id: string | null, content: string, model?: string, attachmentIds: string[] = [], pdfEngine?: string): Promise<ExistingChatResponse> => {
+export const sendToChat = async (id: string, parent_id: string | null, content: string, model?: string, attachmentIds: string[] = []): Promise<ExistingChatResponse> => {
   const result = await apiRequest<SendMessageResponse>(`/api/chats/${encodeURIComponent(id)}/messages`, {
   method: "POST",
-  body: jsonBody({ parent_id, content, attachment_ids: attachmentIds, ...(model ? { model } : {}), ...(pdfEngine ? { pdf_engine: pdfEngine } : {}) }),
+  body: jsonBody({ parent_id, content, attachment_ids: attachmentIds, timezone: browserTimezone(), ...(model ? { model } : {}) }),
   });
   return { ...result, user_message: asMessage(result.user_message), assistant_message: asMessage(result.assistant_message) };
 };
 export const regenerateMessage = async (id: string, model?: string): Promise<RetryResponse> => {
-  const result = await apiRequest<RegenerateMessageResponse>(`/api/messages/${encodeURIComponent(id)}/regenerate`, { method: "POST", body: jsonBody(model ? { model } : {}) });
+  const result = await apiRequest<RegenerateMessageResponse>(`/api/messages/${encodeURIComponent(id)}/regenerate`, { method: "POST", body: jsonBody({ timezone: browserTimezone(), ...(model ? { model } : {}) }) });
   return { assistant_message: asMessage(result.assistant_message) };
 };
 export const switchBranch = (chatId: string, messageId: string) =>

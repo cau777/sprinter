@@ -1,6 +1,8 @@
 use crate::settings::{
-    ApiModel, ModelPricing, ModelsResponse, OpenRouterKeyStatus, SettingsResponse, UploadLimits,
+    ApiModel, ModelPricing, ModelTool, ModelsResponse, OpenRouterKeyStatus, SettingsResponse,
+    UploadLimits,
 };
+use crate::tools::{Citation, ToolStep, ToolStepOutput};
 use crate::{
     chats::{ChatDetail, ChatPage, ChatSummary, SwitchBranchResponse},
     messages::{
@@ -49,6 +51,7 @@ pub fn export() -> Result<(), Box<dyn Error>> {
         format!("export type SessionInfo = {};", SessionInfo::inline()),
         format!("export type ApiModel = {};", ApiModel::inline()),
         format!("export type ModelPricing = {};", ModelPricing::inline()),
+        format!("export type ModelTool = {};", ModelTool::inline()),
         format!("export type ModelsResponse = {};", ModelsResponse::inline()),
         format!(
             "export type OpenRouterKeyStatus = {};",
@@ -74,6 +77,9 @@ pub fn export() -> Result<(), Box<dyn Error>> {
             SwitchBranchResponse::inline()
         ),
         format!("export type MessageRecord = {};", MessageRecord::inline()),
+        format!("export type Citation = {};", Citation::inline()),
+        format!("export type ToolStep = {};", ToolStep::inline()),
+        format!("export type ToolStepOutput = {};", ToolStepOutput::inline()),
         format!(
             "export type MessageAttachment = {};",
             MessageAttachment::inline()

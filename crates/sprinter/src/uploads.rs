@@ -10,7 +10,7 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
@@ -25,6 +25,28 @@ use uuid::Uuid;
 
 const TMP_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 const ORPHAN_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
+const PDF_TEXT_MAX_BYTES: u64 = 16 * 1024 * 1024;
+const DEFAULT_PDF_EXTRACTOR: &str = "pdfjs-6.3.289";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PdfTextStats {
+    pub chars: i64,
+    pub pages: i64,
+    pub empty_pages: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExpandedPrompt {
+    pub messages: Vec<crate::openrouter::ChatMessage>,
+    pub pdf_text: usize,
+    pub pdf_native: usize,
+    pub pdf_omitted: usize,
+}
+impl ExpandedPrompt {
+    pub fn needs_native_pdf_plugin(&self) -> bool {
+        self.pdf_native > 0
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UploadKind {
@@ -56,12 +78,15 @@ pub struct UploadRecord {
     pub kind: String,
     pub mime: String,
     pub size: i64,
+    pub text: Option<PdfTextStats>,
 }
 
 #[derive(Debug, Error)]
 pub enum PromptExpansionError {
     #[error("An attached file is no longer available")]
     Missing,
+    #[error("text has not been extracted from PDF {0}")]
+    PdfTextMissing(String),
     #[error("Attachments in this prompt exceed the configured limit")]
     TooLarge,
     #[error("Could not read an attached file")]
@@ -70,82 +95,85 @@ pub enum PromptExpansionError {
     Database(#[from] sqlx::Error),
 }
 
-/// Expand stored upload IDs into the multimodal content parts accepted by
-/// OpenRouter. `needs_pdf_parser` is true when at least one PDF has no cache.
+/// Expand stored upload IDs into the content parts accepted by OpenRouter.
 pub async fn expand_prompt(
     pool: &SqlitePool,
     data_dir: &FsPath,
     prompt: &[crate::messages::PromptMessage],
     image_support: bool,
+    file_support: bool,
     max_total_bytes: u64,
-) -> Result<(Vec<crate::openrouter::ChatMessage>, bool), PromptExpansionError> {
+) -> Result<ExpandedPrompt, PromptExpansionError> {
     let mut result = Vec::with_capacity(prompt.len());
     let mut total = 0_u64;
-    let mut needs_pdf_parser = false;
+    let mut pdf_text = 0;
+    let mut pdf_native = 0;
+    let mut pdf_omitted = 0;
     for message in prompt {
         let mut parts = Vec::<Value>::new();
         if !message.content.is_empty() {
             parts.push(json!({"type":"text", "text":message.content}));
         }
         for upload_id in &message.attachment_ids {
-            let upload = sqlx::query_as::<_, (String, String, String, i64)>(
-                "SELECT sha256, filename, mime, size FROM uploads WHERE id = ?",
+            let upload = sqlx::query_as::<_, (String, String, String, i64, String, Option<i64>, Option<i64>, Option<i64>)>(
+                "SELECT sha256, filename, mime, size, kind, text_chars, text_pages, text_empty_pages FROM uploads WHERE id = ?",
             )
             .bind(upload_id)
             .fetch_optional(pool)
             .await?
             .ok_or(PromptExpansionError::Missing)?;
-            let kind: String = sqlx::query_scalar("SELECT kind FROM uploads WHERE id = ?")
-                .bind(upload_id)
-                .fetch_one(pool)
-                .await?;
             total = total.saturating_add(upload.3.max(0) as u64);
             if total > max_total_bytes.min(200 * 1024 * 1024) {
                 return Err(PromptExpansionError::TooLarge);
             }
-            if kind == "image" && !image_support {
+            if upload.4 == "image" && !image_support {
                 parts.push(json!({"type":"text", "text":format!(
                     "[image omitted: {}. The current model can't view images]", upload.1
                 )}));
                 continue;
             }
-            if kind == "pdf" {
-                let cache: Option<String> = sqlx::query_scalar(
-                    "SELECT parse_cache FROM message_attachments WHERE upload_id = ? AND parse_cache IS NOT NULL LIMIT 1",
-                )
-                .bind(upload_id)
-                .fetch_optional(pool)
-                .await?;
-                if let Some(annotation) =
-                    cache.and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                {
-                    // OpenRouter's annotation object is itself a reusable `file`
-                    // content part and avoids reading or parsing the PDF again.
-                    parts.push(annotation);
-                    continue;
+            if upload.4 == "pdf" {
+                let (Some(_chars), Some(pages), Some(empty_pages)) = (upload.5, upload.6, upload.7)
+                else {
+                    return Err(PromptExpansionError::PdfTextMissing(upload_id.clone()));
+                };
+                if pages > 0 && pages == empty_pages {
+                    if file_support {
+                        let bytes = tokio::fs::read(content_path(data_dir, &upload.0)).await?;
+                        parts.push(json!({
+                            "type":"document",
+                            "source":{"type":"base64", "media_type":"application/pdf", "data":STANDARD.encode(bytes)},
+                            "title":upload.1
+                        }));
+                        pdf_native += 1;
+                    } else {
+                        parts.push(json!({"type":"text", "text":format!(
+                            "[PDF omitted: {}. No text could be extracted and the current model can't read PDFs]",
+                            upload.1
+                        )}));
+                        pdf_omitted += 1;
+                    }
+                } else {
+                    let text =
+                        tokio::fs::read_to_string(pdf_text_path(data_dir, &upload.0)).await?;
+                    let fence = text_fence(&text);
+                    parts.push(json!({"type":"text", "text":format!(
+                        "Attached PDF: {} ({} pages, text extracted)\n{}text\n{}\n{}",
+                        upload.1, pages, fence, text, fence
+                    )}));
+                    pdf_text += 1;
                 }
-                needs_pdf_parser = true;
+                continue;
             }
             let bytes = tokio::fs::read(content_path(data_dir, &upload.0)).await?;
-            match kind.as_str() {
+            match upload.4.as_str() {
                 "image" => parts.push(json!({
-                    "type":"image_url",
-                    "image_url":{"url":format!("data:{};base64,{}", upload.2, STANDARD.encode(bytes))}
+                    "type":"image",
+                    "source":{"type":"base64", "media_type":upload.2, "data":STANDARD.encode(bytes)}
                 })),
-                "pdf" => {
-                    let file = json!({"filename":upload.1,"file_data":format!("data:application/pdf;base64,{}", STANDARD.encode(bytes))});
-                    parts.push(json!({"type":"file", "file":file}));
-                }
                 "text" => {
                     let text = String::from_utf8_lossy(&bytes);
-                    let fence_len = text
-                        .split('\n')
-                        .map(|line| line.chars().take_while(|c| *c == '`').count())
-                        .max()
-                        .unwrap_or(0)
-                        .max(2)
-                        + 1;
-                    let fence = "`".repeat(fence_len);
+                    let fence = text_fence(&text);
                     let label = upload.1.rsplit('.').next().unwrap_or("");
                     parts.push(json!({"type":"text", "text":format!(
                         "Attached file: {}\n{}{}\n{}\n{}", upload.1, fence, label, text, fence
@@ -164,57 +192,23 @@ pub async fn expand_prompt(
             content,
         });
     }
-    Ok((result, needs_pdf_parser))
+    Ok(ExpandedPrompt {
+        messages: result,
+        pdf_text,
+        pdf_native,
+        pdf_omitted,
+    })
 }
 
-pub async fn cache_pdf_annotations(
-    pool: &SqlitePool,
-    prompt: &[crate::messages::PromptMessage],
-    annotations: &[Value],
-) -> Result<(), sqlx::Error> {
-    let mut pdfs = Vec::<(String, String, String)>::new();
-    for id in prompt
-        .iter()
-        .flat_map(|message| message.attachment_ids.iter())
-    {
-        if pdfs.iter().any(|(seen, _, _)| seen == id) {
-            continue;
-        }
-        if let Some((sha, filename, kind)) = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT sha256, filename, kind FROM uploads WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await?
-        {
-            if kind == "pdf" {
-                pdfs.push((id.clone(), sha, filename));
-            }
-        }
-    }
-    for (index, annotation) in annotations.iter().enumerate() {
-        let file = annotation.get("file").unwrap_or(annotation);
-        let sha = file.get("hash").and_then(Value::as_str);
-        let name = file
-            .get("name")
-            .or_else(|| file.get("filename"))
-            .and_then(Value::as_str);
-        let target = pdfs
-            .iter()
-            .find(|(_, digest, filename)| {
-                sha == Some(digest.as_str()) || name == Some(filename.as_str())
-            })
-            .or_else(|| (pdfs.len() == annotations.len()).then(|| &pdfs[index]));
-        if let Some((upload_id, _, _)) = target {
-            let encoded = serde_json::to_string(annotation).expect("JSON values serialize");
-            sqlx::query("UPDATE message_attachments SET parse_cache = ? WHERE upload_id = ?")
-                .bind(encoded)
-                .bind(upload_id)
-                .execute(pool)
-                .await?;
-        }
-    }
-    Ok(())
+fn text_fence(text: &str) -> String {
+    let fence_len = text
+        .split('\n')
+        .map(|line| line.chars().take_while(|c| *c == '`').count())
+        .max()
+        .unwrap_or(0)
+        .max(2)
+        + 1;
+    "`".repeat(fence_len)
 }
 
 #[derive(Debug, Error)]
@@ -240,6 +234,7 @@ pub enum UploadError {
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/api/uploads", put(put_handler))
+        .route("/api/uploads/{id}/text", put(put_text_handler))
         .route(
             "/api/uploads/{id}",
             axum::routing::get(get_handler).delete(delete_handler),
@@ -275,8 +270,227 @@ async fn put_handler(
         limits,
     )
     .await
-    .map_err(|e| UploadApiError::from_upload(e, &headers))?;
+    .map_err(|error| UploadApiError::from_upload(error, &headers))?;
     Ok((StatusCode::CREATED, axum::Json(record)))
+}
+
+async fn put_text_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<axum::Json<PdfTextStats>, UploadApiError> {
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if !content_type.to_ascii_lowercase().starts_with("text/plain") {
+        return Err(UploadApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_pdf_text",
+            "PDF text must use text/plain",
+        ));
+    }
+    let pages = parse_pdf_count_header(&headers, "x-pdf-pages").ok_or_else(|| {
+        UploadApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_pdf_text",
+            "PDF page counts are invalid",
+        )
+    })?;
+    let empty_pages = parse_pdf_count_header(&headers, "x-pdf-empty-pages").ok_or_else(|| {
+        UploadApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_pdf_text",
+            "PDF page counts are invalid",
+        )
+    })?;
+    let extractor = headers
+        .get("x-pdf-extractor")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or(DEFAULT_PDF_EXTRACTOR);
+    if extractor.is_empty()
+        || extractor.len() > 64
+        || !extractor
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'))
+    {
+        return Err(UploadApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_pdf_text",
+            "PDF extractor version is invalid",
+        ));
+    }
+    match store_pdf_text(
+        &state.pool,
+        &state.config.data_dir,
+        &id,
+        body.into_data_stream(),
+        pages,
+        empty_pages,
+        extractor,
+    )
+    .await
+    {
+        Ok(stored) => {
+            tracing::info!(
+                upload = %id,
+                chars = stored.stats.chars,
+                pages = stored.stats.pages,
+                empty_pages = stored.stats.empty_pages,
+                bytes = stored.bytes,
+                extractor,
+                "PDF text stored"
+            );
+            Ok(axum::Json(stored.stats))
+        }
+        Err(error) => {
+            let reason = match &error {
+                PdfTextError::TooLarge => "too_large",
+                PdfTextError::InvalidText => "not_utf8",
+                PdfTextError::NotPdf => "not_pdf",
+                PdfTextError::InvalidMetadata => "invalid_metadata",
+                PdfTextError::NotFound => "not_found",
+                PdfTextError::Io(_) | PdfTextError::Database(_) => "internal",
+            };
+            tracing::warn!(upload = %id, reason, "PDF text rejected");
+            Err(UploadApiError::from_pdf_text(error, &headers))
+        }
+    }
+}
+
+fn parse_pdf_count_header(headers: &HeaderMap, name: &str) -> Option<i64> {
+    let count = headers.get(name)?.to_str().ok()?.parse::<i64>().ok()?;
+    (count >= 0).then_some(count)
+}
+
+#[derive(Debug, Error)]
+enum PdfTextError {
+    #[error("upload not found")]
+    NotFound,
+    #[error("upload is not a PDF")]
+    NotPdf,
+    #[error("PDF text exceeds its size limit")]
+    TooLarge,
+    #[error("PDF text must be valid UTF-8 without NUL bytes")]
+    InvalidText,
+    #[error("PDF page metadata is invalid")]
+    InvalidMetadata,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
+struct StoredPdfText {
+    stats: PdfTextStats,
+    bytes: u64,
+}
+
+async fn store_pdf_text<S, E>(
+    pool: &SqlitePool,
+    data_dir: &FsPath,
+    upload_id: &str,
+    mut stream: S,
+    pages: i64,
+    empty_pages: i64,
+    extractor: &str,
+) -> Result<StoredPdfText, PdfTextError>
+where
+    S: futures_util::Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    if pages <= 0 || empty_pages < 0 || empty_pages > pages {
+        return Err(PdfTextError::InvalidMetadata);
+    }
+    let (kind, sha): (String, String) =
+        sqlx::query_as("SELECT kind, sha256 FROM uploads WHERE id = ?")
+            .bind(upload_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(PdfTextError::NotFound)?;
+    if kind != "pdf" {
+        return Err(PdfTextError::NotPdf);
+    }
+
+    let tmp_dir = data_dir.join("tmp");
+    create_private_dir(&tmp_dir)?;
+    let tmp_path = tmp_dir.join(Uuid::now_v7().to_string());
+    let mut file = File::create(&tmp_path)?;
+    let mut size = 0_u64;
+    let mut utf8 = Utf8Validator::default();
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                drop(file);
+                let _ = fs::remove_file(&tmp_path);
+                return Err(PdfTextError::Io(std::io::Error::other(
+                    "request body stream failed",
+                )));
+            }
+        };
+        size = match size.checked_add(chunk.len() as u64) {
+            Some(size) if size <= PDF_TEXT_MAX_BYTES => size,
+            _ => {
+                drop(file);
+                let _ = fs::remove_file(&tmp_path);
+                return Err(PdfTextError::TooLarge);
+            }
+        };
+        if chunk.contains(&0) || !utf8.feed(&chunk) {
+            drop(file);
+            let _ = fs::remove_file(&tmp_path);
+            return Err(PdfTextError::InvalidText);
+        }
+        if let Err(error) = file.write_all(&chunk) {
+            drop(file);
+            let _ = fs::remove_file(&tmp_path);
+            return Err(PdfTextError::Io(error));
+        }
+    }
+    if !utf8.finish() {
+        drop(file);
+        let _ = fs::remove_file(&tmp_path);
+        return Err(PdfTextError::InvalidText);
+    }
+    if let Err(error) = file.sync_all() {
+        drop(file);
+        let _ = fs::remove_file(&tmp_path);
+        return Err(PdfTextError::Io(error));
+    }
+    drop(file);
+
+    let stats = PdfTextStats {
+        chars: i64::try_from(utf8.chars).map_err(|_| PdfTextError::InvalidMetadata)?,
+        pages,
+        empty_pages,
+    };
+    let target = pdf_text_path(data_dir, &sha);
+    let parent = target
+        .parent()
+        .ok_or_else(|| PdfTextError::Io(std::io::Error::other("invalid text path")))?;
+    create_private_dir(&data_dir.join("uploads"))?;
+    create_private_dir(parent)?;
+    if let Err(error) = fs::rename(&tmp_path, &target) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(PdfTextError::Io(error));
+    }
+    sqlx::query(
+        "UPDATE uploads SET text_chars = ?, text_pages = ?, text_empty_pages = ?, text_extractor = ? WHERE sha256 = ?",
+    )
+    .bind(stats.chars)
+    .bind(stats.pages)
+    .bind(stats.empty_pages)
+    .bind(extractor)
+    .bind(&sha)
+    .execute(pool)
+    .await?;
+    Ok(StoredPdfText { stats, bytes: size })
 }
 
 async fn get_handler(
@@ -407,6 +621,7 @@ async fn delete_handler(
         .map_err(|_| UploadApiError::internal(&headers))?;
     if !still_used {
         let _ = fs::remove_file(content_path(&state.config.data_dir, &hash));
+        let _ = fs::remove_file(pdf_text_path(&state.config.data_dir, &hash));
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -446,7 +661,7 @@ where
 {
     let filename = sanitize_filename(filename)?;
     let tmp_dir = data_dir.join("tmp");
-    fs::create_dir_all(&tmp_dir)?;
+    create_private_dir(&tmp_dir)?;
     let tmp_path = tmp_dir.join(Uuid::now_v7().to_string());
     let mut file = File::create(&tmp_path)?;
     let mut hasher = Sha256::new();
@@ -517,7 +732,8 @@ where
     let parent = target
         .parent()
         .ok_or_else(|| UploadError::Io(std::io::Error::other("invalid content path")))?;
-    fs::create_dir_all(parent)?;
+    create_private_dir(&data_dir.join("uploads"))?;
+    create_private_dir(parent)?;
     // hard_link is an atomic create-if-absent operation, unlike rename on Unix which
     // would replace a concurrently published object. Both paths are under DATA_DIR.
     match fs::hard_link(&tmp_path, &target) {
@@ -539,12 +755,27 @@ where
         if !referenced { let _ = fs::remove_file(&target); }
         return Err(UploadError::Database(error));
     }
+    let text_stats = sqlx::query_as::<_, (Option<i64>, Option<i64>, Option<i64>)>(
+        "SELECT text_chars, text_pages, text_empty_pages FROM uploads WHERE sha256 = ? LIMIT 1",
+    )
+    .bind(&digest)
+    .fetch_one(pool)
+    .await?;
+    let text = match text_stats {
+        (Some(chars), Some(pages), Some(empty_pages)) => Some(PdfTextStats {
+            chars,
+            pages,
+            empty_pages,
+        }),
+        _ => None,
+    };
     Ok(UploadRecord {
         id,
         filename,
         kind: kind.as_str().to_owned(),
         mime,
         size: size as i64,
+        text,
     })
 }
 
@@ -575,8 +806,13 @@ pub async fn gc(pool: &SqlitePool, data_dir: &FsPath, now: i64) -> Result<usize,
                 .bind(&hash)
                 .fetch_one(pool)
                 .await?;
-        if !used && fs::remove_file(content_path(data_dir, &hash)).is_ok() {
-            removed += 1;
+        if !used {
+            if fs::remove_file(content_path(data_dir, &hash)).is_ok() {
+                removed += 1;
+            }
+            if fs::remove_file(pdf_text_path(data_dir, &hash)).is_ok() {
+                removed += 1;
+            }
         }
     }
     // Recover from a crash after publishing the content file but before inserting
@@ -591,7 +827,12 @@ pub async fn gc(pool: &SqlitePool, data_dir: &FsPath, now: i64) -> Result<usize,
                 continue;
             };
             for file in files.flatten() {
-                let hash = file.file_name().to_string_lossy().into_owned();
+                let name = file.file_name().to_string_lossy().into_owned();
+                let (hash, is_text) = if let Some(hash) = name.strip_suffix(".txt") {
+                    (hash.to_owned(), true)
+                } else {
+                    (name, false)
+                };
                 if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
                     continue;
                 }
@@ -611,8 +852,19 @@ pub async fn gc(pool: &SqlitePool, data_dir: &FsPath, now: i64) -> Result<usize,
                         .bind(&hash)
                         .fetch_one(pool)
                         .await?;
-                if !used && fs::remove_file(file.path()).is_ok() {
-                    removed += 1;
+                if !used {
+                    if is_text {
+                        if fs::remove_file(file.path()).is_ok() {
+                            removed += 1;
+                        }
+                    } else {
+                        if fs::remove_file(file.path()).is_ok() {
+                            removed += 1;
+                        }
+                        if fs::remove_file(pdf_text_path(data_dir, &hash)).is_ok() {
+                            removed += 1;
+                        }
+                    }
                 }
             }
         }
@@ -648,6 +900,26 @@ pub async fn gc_loop(pool: SqlitePool, data_dir: PathBuf) {
 
 fn content_path(data_dir: &FsPath, digest: &str) -> PathBuf {
     data_dir.join("uploads").join(&digest[..2]).join(digest)
+}
+fn pdf_text_path(data_dir: &FsPath, digest: &str) -> PathBuf {
+    data_dir
+        .join("uploads")
+        .join(&digest[..2])
+        .join(format!("{digest}.txt"))
+}
+
+fn create_private_dir(path: &FsPath) -> std::io::Result<()> {
+    match fs::create_dir(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() => {}
+        Err(error) => return Err(error),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -773,16 +1045,21 @@ fn looks_like_svg(b: &[u8]) -> bool {
 #[derive(Default)]
 struct Utf8Validator {
     pending: Vec<u8>,
+    chars: usize,
 }
 impl Utf8Validator {
     fn feed(&mut self, bytes: &[u8]) -> bool {
         self.pending.extend_from_slice(bytes);
         match std::str::from_utf8(&self.pending) {
-            Ok(_) => {
+            Ok(text) => {
+                self.chars += text.encode_utf16().count();
                 self.pending.clear();
                 true
             }
             Err(e) if e.error_len().is_none() => {
+                let valid = std::str::from_utf8(&self.pending[..e.valid_up_to()])
+                    .expect("valid prefix was checked by from_utf8");
+                self.chars += valid.encode_utf16().count();
                 let remainder = self.pending.split_off(e.valid_up_to());
                 self.pending = remainder;
                 true
@@ -847,6 +1124,35 @@ impl UploadApiError {
             _ => Self::internal(headers),
         }
     }
+    fn from_pdf_text(error: PdfTextError, headers: &HeaderMap) -> Self {
+        match error {
+            PdfTextError::NotFound => Self::new(
+                headers,
+                StatusCode::NOT_FOUND,
+                "upload_not_found",
+                "Upload not found",
+            ),
+            PdfTextError::NotPdf => Self::new(
+                headers,
+                StatusCode::CONFLICT,
+                "upload_not_pdf",
+                "Extracted PDF text can only be stored for PDF uploads",
+            ),
+            PdfTextError::TooLarge => Self::new(
+                headers,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "pdf_text_too_large",
+                "Extracted PDF text exceeds 16 MB",
+            ),
+            PdfTextError::InvalidText | PdfTextError::InvalidMetadata => Self::new(
+                headers,
+                StatusCode::BAD_REQUEST,
+                "invalid_pdf_text",
+                "Extracted PDF text or page metadata is invalid",
+            ),
+            PdfTextError::Io(_) | PdfTextError::Database(_) => Self::internal(headers),
+        }
+    }
 }
 impl IntoResponse for UploadApiError {
     fn into_response(self) -> Response {
@@ -902,6 +1208,31 @@ mod tests {
                 .map(|c| Ok(Bytes::copy_from_slice(c)))
                 .collect::<Vec<_>>(),
         )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_upload_directories_are_searchable_and_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("sprinter-private-dir-test-{}", Uuid::now_v7()));
+        create_private_dir(&root).unwrap();
+        let uploads = root.join("uploads");
+        let shard = uploads.join("ab");
+        create_private_dir(&uploads).unwrap();
+        create_private_dir(&shard).unwrap();
+
+        assert_eq!(
+            fs::metadata(&uploads).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&shard).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        File::create(shard.join("content.txt")).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
@@ -975,16 +1306,34 @@ mod tests {
     #[tokio::test]
     async fn gc_removes_unattached_upload_rows_and_content() {
         let (pool, root) = setup().await;
-        let rec = store_stream(&pool, &root, "note.txt", chunks(b"hello".to_vec()))
-            .await
-            .unwrap();
+        let rec = store_stream(
+            &pool,
+            &root,
+            "report.pdf",
+            chunks(b"%PDF-1.7 fake".to_vec()),
+        )
+        .await
+        .unwrap();
         let hash: String = sqlx::query_scalar("SELECT sha256 FROM uploads WHERE id = ?")
             .bind(&rec.id)
             .fetch_one(&pool)
             .await
             .unwrap();
         let path = content_path(&root, &hash);
+        let text_path = pdf_text_path(&root, &hash);
+        store_pdf_text(
+            &pool,
+            &root,
+            &rec.id,
+            chunks(b"extracted".to_vec()),
+            1,
+            0,
+            "pdfjs-test",
+        )
+        .await
+        .unwrap();
         assert!(path.exists());
+        assert!(text_path.exists());
         sqlx::query("UPDATE uploads SET created_at = 1 WHERE id = ?")
             .bind(&rec.id)
             .execute(&pool)
@@ -992,6 +1341,7 @@ mod tests {
             .unwrap();
         gc(&pool, &root, TMP_MAX_AGE_MS + 2).await.unwrap();
         assert!(!path.exists());
+        assert!(!text_path.exists());
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM uploads")
                 .fetch_one(&pool)
@@ -1046,7 +1396,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prompt_expansion_builds_image_pdf_text_parts_and_vision_placeholder() {
+    async fn prompt_expansion_uses_extracted_text_and_gates_scan_fallback_by_model() {
         let (pool, root) = setup().await;
         let image = store_stream(
             &pool,
@@ -1059,6 +1409,21 @@ mod tests {
         let pdf = store_stream(&pool, &root, "scan.pdf", chunks(b"%PDF-1.7 fake".to_vec()))
             .await
             .unwrap();
+        let pdf_sha: String = sqlx::query_scalar("SELECT sha256 FROM uploads WHERE id = ?")
+            .bind(&pdf.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let extracted = "## Page 1\nExtracted report content";
+        fs::write(pdf_text_path(&root, &pdf_sha), extracted).unwrap();
+        sqlx::query(
+            "UPDATE uploads SET text_chars = ?, text_pages = 1, text_empty_pages = 0 WHERE id = ?",
+        )
+        .bind(extracted.len() as i64)
+        .bind(&pdf.id)
+        .execute(&pool)
+        .await
+        .unwrap();
         let text = store_stream(&pool, &root, "notes.md", chunks(b"hello `world`".to_vec()))
             .await
             .unwrap();
@@ -1067,24 +1432,27 @@ mod tests {
             content: "Summarize these".into(),
             attachment_ids: vec![image.id.clone(), pdf.id.clone(), text.id.clone()],
         }];
-        let (expanded, needs_parser) = expand_prompt(&pool, &root, &prompt, true, 1024 * 1024)
+        let expanded = expand_prompt(&pool, &root, &prompt, true, false, 1024 * 1024)
             .await
             .unwrap();
-        let parts = expanded[0].content.as_array().unwrap();
+        let parts = expanded.messages[0].content.as_array().unwrap();
         assert_eq!(parts[0]["text"], "Summarize these");
-        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["type"], "image");
+        assert_eq!(parts[1]["source"]["type"], "base64");
+        assert_eq!(parts[1]["source"]["media_type"], "image/webp");
+        assert!(parts[1]["source"]["data"].as_str().is_some());
+        assert_eq!(parts[2]["type"], "text");
         assert!(
-            parts[1]["image_url"]["url"]
+            parts[2]["text"]
                 .as_str()
                 .unwrap()
-                .starts_with("data:image/webp;base64,")
+                .contains("Attached PDF: scan.pdf (1 pages, text extracted)")
         );
-        assert_eq!(parts[2]["type"], "file");
         assert!(
-            parts[2]["file"]["file_data"]
+            parts[2]["text"]
                 .as_str()
                 .unwrap()
-                .starts_with("data:application/pdf;base64,")
+                .contains("```text\n## Page 1\nExtracted report content\n```")
         );
         assert!(
             parts[3]["text"]
@@ -1092,22 +1460,65 @@ mod tests {
                 .unwrap()
                 .contains("```md\nhello `world`\n```")
         );
-        assert!(needs_parser);
+        assert_eq!(expanded.pdf_text, 1);
+        assert_eq!(expanded.pdf_native, 0);
 
-        let (without_vision, _) = expand_prompt(&pool, &root, &prompt, false, 1024 * 1024)
+        let without_vision = expand_prompt(&pool, &root, &prompt, false, false, 1024 * 1024)
             .await
             .unwrap();
-        let parts = without_vision[0].content.as_array().unwrap();
+        let parts = without_vision.messages[0].content.as_array().unwrap();
         assert!(
             parts[1]["text"]
                 .as_str()
                 .unwrap()
                 .contains("image omitted: photo.webp")
         );
-        assert_eq!(parts[2]["type"], "file");
+        assert_eq!(parts[2]["type"], "text");
+
+        let scan = store_stream(
+            &pool,
+            &root,
+            "empty-scan.pdf",
+            chunks(b"%PDF-1.7 scan".to_vec()),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE uploads SET text_chars = 0, text_pages = 2, text_empty_pages = 2 WHERE id = ?",
+        )
+        .bind(&scan.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let scan_prompt = [crate::messages::PromptMessage {
+            role: "user".into(),
+            content: "read the scan".into(),
+            attachment_ids: vec![scan.id],
+        }];
+        let native = expand_prompt(&pool, &root, &scan_prompt, true, true, 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(native.messages[0].content[1]["type"], "document");
+        assert_eq!(native.messages[0].content[1]["source"]["type"], "base64");
+        assert_eq!(
+            native.messages[0].content[1]["source"]["media_type"],
+            "application/pdf"
+        );
+        assert_eq!(native.messages[0].content[1]["title"], "empty-scan.pdf");
+        assert!(native.needs_native_pdf_plugin());
+        let omitted = expand_prompt(&pool, &root, &scan_prompt, true, false, 1024 * 1024)
+            .await
+            .unwrap();
+        assert!(
+            omitted.messages[0].content[1]["text"]
+                .as_str()
+                .unwrap()
+                .contains("PDF omitted: empty-scan.pdf")
+        );
+        assert_eq!(omitted.pdf_omitted, 1);
 
         assert!(matches!(
-            expand_prompt(&pool, &root, &prompt, true, 2).await,
+            expand_prompt(&pool, &root, &prompt, true, false, 2).await,
             Err(PromptExpansionError::TooLarge)
         ));
         pool.close().await;
@@ -1115,33 +1526,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parsed_pdf_annotations_are_cached_and_sent_back_on_later_prompts() {
+    async fn pdf_text_storage_is_streamed_shared_and_utf8_validated() {
         let (pool, root) = setup().await;
-        let pdf = store_stream(&pool, &root, "scan.pdf", chunks(b"%PDF-1.7 fake".to_vec()))
+        let pdf = store_stream(
+            &pool,
+            &root,
+            "report.pdf",
+            chunks(b"%PDF-1.7 fake".to_vec()),
+        )
+        .await
+        .unwrap();
+        let duplicate = store_stream(&pool, &root, "copy.pdf", chunks(b"%PDF-1.7 fake".to_vec()))
             .await
             .unwrap();
-        let sha: String = sqlx::query_scalar("SELECT sha256 FROM uploads WHERE id = ?")
-            .bind(&pdf.id)
-            .fetch_one(&pool)
+        let stream = stream::iter(vec![
+            Ok::<_, std::io::Error>(Bytes::from_static(b"abc \xf0\x9f")),
+            Ok(Bytes::from_static(b"\x8c\x8d")),
+        ]);
+        let stored = store_pdf_text(&pool, &root, &pdf.id, stream, 2, 1, "pdfjs-test")
             .await
             .unwrap();
-        sqlx::query("INSERT INTO chats(id, model, created_at, updated_at) VALUES('cache-chat', 'test/chat', 1, 1)").execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO messages(id, chat_id, role, content, status, created_at, updated_at) VALUES('cache-message', 'cache-chat', 'user', 'read this', 'complete', 1, 1)").execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO message_attachments(message_id, upload_id, position) VALUES('cache-message', ?, 0)").bind(&pdf.id).execute(&pool).await.unwrap();
+        assert_eq!(stored.stats.chars, 6);
+        assert_eq!(stored.bytes, 8);
+        assert_eq!(
+            fs::read_to_string(pdf_text_path(
+                &root,
+                &hex::encode(Sha256::digest(b"%PDF-1.7 fake"))
+            ))
+            .unwrap(),
+            "abc 🌍"
+        );
+        let duplicate_stats = sqlx::query_as::<_, (Option<i64>, Option<i64>, Option<i64>, Option<String>)>(
+            "SELECT text_chars, text_pages, text_empty_pages, text_extractor FROM uploads WHERE id = ?",
+        )
+        .bind(&duplicate.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            duplicate_stats,
+            (Some(6), Some(2), Some(1), Some("pdfjs-test".into()))
+        );
+
+        let invalid = store_pdf_text(
+            &pool,
+            &root,
+            &pdf.id,
+            chunks(b"bad\0text".to_vec()),
+            1,
+            0,
+            "pdfjs-test",
+        )
+        .await;
+        assert!(matches!(invalid, Err(PdfTextError::InvalidText)));
+        let scan_prompt = [crate::messages::PromptMessage {
+            role: "user".into(),
+            content: "read this".into(),
+            attachment_ids: vec!["old-pdf".into()],
+        }];
+        sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at) VALUES('old-pdf', 'old-pdf-hash', 'old.pdf', 'application/pdf', 'pdf', 100, 1)")
+            .execute(&pool).await.unwrap();
+        assert!(matches!(
+            expand_prompt(&pool, &root, &scan_prompt, true, false, 1024).await,
+            Err(PromptExpansionError::PdfTextMissing(id)) if id == "old-pdf"
+        ));
         let prompt = [crate::messages::PromptMessage {
             role: "user".into(),
             content: "read this".into(),
             attachment_ids: vec![pdf.id.clone()],
         }];
-        let annotation = json!({"type":"file", "file":{"hash":sha,"name":"scan.pdf","content":[{"type":"text","text":"parsed"}]}});
-        cache_pdf_annotations(&pool, &prompt, std::slice::from_ref(&annotation))
+        let expanded = expand_prompt(&pool, &root, &prompt, true, false, 1024)
             .await
             .unwrap();
-        let (expanded, needs_parser) = expand_prompt(&pool, &root, &prompt, true, 1024)
-            .await
-            .unwrap();
-        assert!(!needs_parser);
-        assert_eq!(expanded[0].content[1], annotation);
+        assert_eq!(expanded.pdf_text, 1);
+        assert!(
+            expanded.messages[0].content[1]["text"]
+                .as_str()
+                .unwrap()
+                .contains("abc 🌍")
+        );
         pool.close().await;
         fs::remove_dir_all(root).unwrap();
     }

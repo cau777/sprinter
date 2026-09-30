@@ -6,7 +6,6 @@ import { ApiError } from "../api/client";
 import { fetchModels, fetchSessions, fetchSettings, fetchUsage, revokeAllSessions, revokeSession, updateSettingsAndRefetchFavorites } from "../api/settings";
 import { ModelPicker } from "../components/ModelPicker";
 import { useOnlineStatus } from "../api/useOnlineStatus";
-import { SelectField } from "../components/SelectField";
 import { clearPersistedQueryCache } from "../api/queryPersistence";
 
 export function SettingsPage() {
@@ -124,9 +123,8 @@ export function SettingsPage() {
         </section>
 
         <section className="settings-section" aria-labelledby="files-heading">
-          <div className="settings-section-heading"><div className="settings-section-icon"><FileText size={16} /></div><div><h2 id="files-heading">Files</h2><p>Choose how PDFs are parsed and set upload limits.</p></div></div>
+          <div className="settings-section-heading"><div className="settings-section-icon"><FileText size={16} /></div><div><h2 id="files-heading">Files</h2><p>Set upload limits for attachments.</p></div></div>
           <div className="settings-card settings-files-card">
-            <label className="settings-select-field"><span>PDF parsing engine</span><SelectField aria-label="PDF parsing engine" className="w-full" value={settings?.pdf_engine ?? "cloudflare-ai"} isDisabled={save.isPending} onChange={(pdf_engine) => { setSaved(undefined); setError(undefined); save.mutate({ pdf_engine }); }} options={[{ value: "cloudflare-ai", label: "Cloudflare AI · free" }, { value: "mistral-ocr", label: "Mistral OCR" }, { value: "native", label: "Native" }]} /><small>Applies to PDFs attached to new messages.</small></label>
             {uploadLimits && <>
               <div className="settings-limit-grid">
                 <LimitInput label="Images · MB per file" value={uploadLimits.image_bytes} scale={1024 * 1024} max={40} onChange={(n) => setUploadDraft({ ...uploadLimits, image_bytes: n })} />

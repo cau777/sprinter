@@ -1,7 +1,11 @@
 import type { ChatAttachment } from "./chats";
-import { ApiError } from "./client";
+import { ApiError, type ApiErrorBody } from "./client";
+import { PDF_TEXT_EXTRACTOR, type ExtractedPdfText } from "../pdf/extractText";
 
-export type UploadRecord = Pick<ChatAttachment, "upload_id" | "filename" | "kind" | "mime" | "size">;
+export type UploadRecord = Pick<ChatAttachment, "upload_id" | "filename" | "kind" | "mime" | "size" | "text_chars" | "text_pages" | "text_empty_pages"> & {
+  text: PdfTextStats | null;
+};
+export type PdfTextStats = { chars: number; pages: number; empty_pages: number };
 
 const isGif = (file: File) => file.type === "image/gif" || /\.gif$/i.test(file.name);
 const isImage = (file: File) => file.type.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
@@ -51,12 +55,51 @@ export async function uploadFile(file: File, onProgress: (progress: number) => v
         return;
       }
       try {
-        const result = JSON.parse(request.responseText) as { id: string; filename: string; kind: string; mime: string; size: number };
-        resolve({ upload_id: result.id, filename: result.filename, kind: result.kind, mime: result.mime, size: result.size });
+        const result = JSON.parse(request.responseText) as { id: string; filename: string; kind: string; mime: string; size: number; text: PdfTextStats | null };
+        resolve({
+          upload_id: result.id,
+          filename: result.filename,
+          kind: result.kind,
+          mime: result.mime,
+          size: result.size,
+          text: result.text,
+          text_chars: result.text?.chars ?? null,
+          text_pages: result.text?.pages ?? null,
+          text_empty_pages: result.text?.empty_pages ?? null,
+        });
       } catch { reject(new Error("The server returned an invalid upload response.")); }
     };
     request.send(prepared);
   });
+}
+
+export async function storePdfText(uploadId: string, extracted: ExtractedPdfText): Promise<PdfTextStats> {
+  const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}/text`, {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: {
+      "X-Sprinter": "1",
+      "X-Pdf-Pages": String(extracted.pages),
+      "X-Pdf-Empty-Pages": String(extracted.empty_pages),
+      "X-Pdf-Extractor": PDF_TEXT_EXTRACTOR,
+      "Content-Type": "text/plain; charset=utf-8",
+    },
+    body: extracted.text,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as ApiErrorBody;
+    throw new ApiError(response.status, body);
+  }
+  return await response.json() as PdfTextStats;
+}
+
+export async function fetchPdfFile(uploadId: string, filename: string): Promise<File> {
+  const response = await fetch(`/api/uploads/${encodeURIComponent(uploadId)}`, { credentials: "same-origin" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as ApiErrorBody;
+    throw new ApiError(response.status, body);
+  }
+  return new File([await response.blob()], filename, { type: "application/pdf" });
 }
 
 export async function deleteUpload(id: string) {

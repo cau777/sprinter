@@ -38,9 +38,10 @@ impl FakeOpenRouter {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/api/v1/models", get(models))
+            .route("/api/v1/endpoints/zdr", get(zdr_endpoints))
             .route("/api/v1/credits", get(credits))
             .route("/api/v1/key", get(key_info))
-            .route("/api/v1/chat/completions", post(chat_completions))
+            .route("/api/v1/messages", post(messages))
             .route("/__requests", get(requests))
             .route("/__reset", post(reset))
             .with_state(self.clone())
@@ -92,10 +93,27 @@ pub async fn serve(addr: SocketAddr) -> std::io::Result<()> {
 async fn models(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json<Value> {
     state.record("GET", "/api/v1/models", &headers, Value::Null);
     Json(json!({"data": [
-        model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false),
-        model("test/vision", "Fake Vision", 65536, "0.000003", "0.000006", true),
-        model("test/title", "Fake Title", 8192, "0.0000001", "0.0000002", false)
+        with_tools(model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false, false)),
+        model("test/vision", "Fake Vision", 65536, "0.000003", "0.000006", true, false),
+        with_tools(model("test/file", "Fake PDF", 32768, "0.000001", "0.000002", false, true)),
+        with_tools(model("test/partial", "Fake Partial Search", 32768, "0.000001", "0.000002", false, false)),
+        model("test/title", "Fake Title", 8192, "0.0000001", "0.0000002", false, false)
     ]}))
+}
+
+async fn zdr_endpoints(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json<Value> {
+    state.record("GET", "/api/v1/endpoints/zdr", &headers, Value::Null);
+    Json(json!({"data": [
+        {"model_id":"test/text","provider_name":"Azure","tag":"azure/global","native_tools":{"openrouter:web_search":{"type":"web_search"},"openrouter:apply_patch":{"type":"apply_patch"}}},
+        {"model_id":"test/partial","provider_name":"Search A","tag":"search-a","native_tools":{"openrouter:web_search":{"type":"google_search"}}},
+        {"model_id":"test/partial","provider_name":"Search B","tag":"search-b","native_tools":{}},
+        {"model_id":"test/file","provider_name":"Azure","tag":"azure/global","native_tools":{}}
+    ]}))
+}
+
+fn with_tools(mut model: Value) -> Value {
+    model["supported_parameters"] = json!(["tools"]);
+    model
 }
 
 fn model(
@@ -105,10 +123,14 @@ fn model(
     prompt: &str,
     completion: &str,
     vision: bool,
+    files: bool,
 ) -> Value {
     let mut input_modalities = vec!["text"];
     if vision {
         input_modalities.push("image");
+    }
+    if files {
+        input_modalities.push("file");
     }
     json!({
         "id": id,
@@ -172,12 +194,16 @@ async fn reset(State(state): State<FakeOpenRouter>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-async fn chat_completions(
+async fn messages(
     State(state): State<FakeOpenRouter>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    state.record("POST", "/api/v1/chat/completions", &headers, body.clone());
+    state.record("POST", "/api/v1/messages", &headers, body.clone());
+
+    if let Some(response) = http_error(&body) {
+        return response;
+    }
 
     let user_text = last_user_text(&body);
     if body.get("stream").and_then(Value::as_bool) != Some(true) {
@@ -197,6 +223,38 @@ async fn chat_completions(
     Sse::new(output).into_response()
 }
 
+fn http_error(body: &Value) -> Option<Response> {
+    let status = body
+        .get("model")
+        .and_then(Value::as_str)?
+        .strip_prefix("test/http-error-")?
+        .parse::<u16>()
+        .ok()?;
+    let (kind, error_type, message) = match status {
+        400 => (
+            "invalid_request_error",
+            "invalid_request",
+            "This endpoint's maximum context length is 200000 tokens.",
+        ),
+        401 => ("authentication_error", "authentication", "Bad API key."),
+        402 => ("payment_error", "payment_required", "No credits remain."),
+        429 => (
+            "rate_limit_error",
+            "rate_limit_exceeded",
+            "Rate limit exceeded.",
+        ),
+        503 => ("api_error", "server_error", "Provider unavailable."),
+        _ => ("api_error", "unknown", "Provider rejected the request."),
+    };
+    Some(
+        (
+            StatusCode::from_u16(status).ok()?,
+            Json(json!({"type":"error","error":{"type":kind,"error_type":error_type,"message":message},"request_id":"gen-fake"})),
+        )
+            .into_response(),
+    )
+}
+
 #[derive(Clone, Copy)]
 enum Scenario {
     Echo,
@@ -204,6 +262,10 @@ enum Scenario {
     Error,
     Rich,
     Think,
+    Truncated,
+    Search,
+    ToolFallback,
+    Bash,
 }
 impl Scenario {
     fn from_text(text: &str) -> Self {
@@ -215,6 +277,14 @@ impl Scenario {
             Self::Rich
         } else if text.contains("[[think]]") {
             Self::Think
+        } else if text.contains("[[truncated]]") {
+            Self::Truncated
+        } else if text.contains("[[tool-fallback]]") {
+            Self::ToolFallback
+        } else if text.contains("[[tool-bash]]") {
+            Self::Bash
+        } else if text.contains("[[tool-search]]") {
+            Self::Search
         } else {
             Self::Echo
         }
@@ -225,22 +295,216 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
     if matches!(scenario, Scenario::Error) {
         return vec![
             (
-                Duration::from_millis(60),
-                sse_data(
-                    json!({"id":"fake-completion","object":"chat.completion.chunk","created":now_secs(),"model":model_name(body),"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}),
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
                 ),
             ),
             (
                 Duration::from_millis(60),
-                sse_data(
-                    json!({"id":"fake-completion","object":"chat.completion.chunk","created":now_secs(),"model":model_name(body),"choices":[{"index":0,"delta":{"content":"Partial reply"},"finish_reason":null}]}),
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Partial reply"}}),
                 ),
             ),
             (
                 Duration::from_millis(60),
-                sse_data(
-                    json!({"error":{"message":"Rate limit exceeded","code":429,"metadata":{"provider_name":"Fake"}}}),
+                named_data(
+                    "error",
+                    json!({"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded","error_type":"rate_limit_exceeded"},"request_id":"gen-fake"}),
                 ),
+            ),
+        ];
+    }
+
+    if matches!(scenario, Scenario::Truncated) {
+        return vec![
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Cut off"}}),
+                ),
+            ),
+        ];
+    }
+
+    if matches!(scenario, Scenario::Search | Scenario::ToolFallback) {
+        let fallback = matches!(scenario, Scenario::ToolFallback);
+        let mut chunks = vec![
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"ws_fake_1","name":"openrouter:web_search","input":{}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":0}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"ws_fake_2","name":"openrouter:web_search","input":{}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":1}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Search result summary."}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://example.com/source","title":"Example source","cited_text":"","encrypted_index":""}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":2}),
+                ),
+            ),
+        ];
+        chunks.push((Duration::ZERO, named_data("message_delta", json!({
+            "type":"message_delta","delta":{"stop_reason":"end_turn"},
+            "usage":{"input_tokens":12,"output_tokens":4,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0},"tool_calls_requested":if fallback {1} else {0},"tool_calls_executed":if fallback {1} else {0},"cost":if fallback {0.012} else {0.005},"cost_details":{"upstream_inference_cost":0.005,"server_tool_cost":if fallback {0.007} else {0.0}}}
+        }))));
+        chunks.push((
+            Duration::ZERO,
+            named_data("message_stop", json!({"type":"message_stop"})),
+        ));
+        chunks.push((
+            Duration::ZERO,
+            Event::default().event("data").data("[DONE]"),
+        ));
+        return chunks;
+    }
+
+    if matches!(scenario, Scenario::Bash) {
+        return vec![
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_start",
+                    json!({"type":"message_start","message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","usage":{"input_tokens":12,"output_tokens":0}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"toolu_fake","name":"openrouter:bash","input":{}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"printf tool-output\"}"}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":0}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":1,"content_block":{"type":"openrouter_bash_tool_result","tool_use_id":"toolu_fake","content":{"command":"printf tool-output","stdout":"tool-output","stderr":"","exitCode":0,"container_id":"container-fake"}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_start",
+                    json!({"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_delta",
+                    json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Command completed."}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "content_block_stop",
+                    json!({"type":"content_block_stop","index":2}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data(
+                    "message_delta",
+                    json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":12,"output_tokens":4,"cost":0.0034,"cost_details":{"upstream_inference_cost":0.0004,"server_tool_cost":0.003}}}),
+                ),
+            ),
+            (
+                Duration::ZERO,
+                named_data("message_stop", json!({"type":"message_stop"})),
+            ),
+            (
+                Duration::ZERO,
+                Event::default().event("data").data("[DONE]"),
             ),
         ];
     }
@@ -264,42 +528,66 @@ fn scenario_chunks(body: &Value, user_text: &str, scenario: Scenario) -> Vec<(Du
     } else {
         Duration::ZERO
     };
-    let mut out = Vec::new();
+    let mut out = vec![(
+        Duration::ZERO,
+        named_data(
+            "message_start",
+            json!({
+                "type":"message_start",
+                "message":{"id":"gen-fake","model":model_name(body),"provider":"Azure","content":[],"usage":{"input_tokens":12,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":0}}
+            }),
+        ),
+    )];
+    out.push((Duration::ZERO, named_data("ping", json!({"type":"ping"}))));
+    if matches!(scenario, Scenario::Think) {
+        out.extend([
+            (Duration::ZERO, named_data("content_block_start", json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"internal thought"}}))),
+            (Duration::ZERO, named_data("content_block_delta", json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"internal thought"}}))),
+            (Duration::ZERO, named_data("content_block_stop", json!({"type":"content_block_stop","index":0}))),
+            (Duration::ZERO, named_data("content_block_start", json!({"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}))),
+            (Duration::ZERO, named_data("content_block_stop", json!({"type":"content_block_stop","index":1}))),
+        ]);
+    }
+    let unknown_index = if matches!(scenario, Scenario::Think) {
+        2
+    } else {
+        0
+    };
+    out.extend([
+        (Duration::ZERO, named_data("content_block_start", json!({"type":"content_block_start","index":unknown_index,"content_block":{"type":"future_unknown","data":{}}}))),
+        (Duration::ZERO, named_data("content_block_delta", json!({"type":"content_block_delta","index":unknown_index,"delta":{"type":"text_delta","text":"ignored unknown block"}}))),
+        (Duration::ZERO, named_data("content_block_stop", json!({"type":"content_block_stop","index":unknown_index}))),
+    ]);
+    let text_index = unknown_index + 1;
+    out.push((Duration::ZERO, named_data("content_block_start", json!({
+        "type":"content_block_start","index":text_index,"content_block":{"type":"text","text":""}
+    }))));
     for (index, part) in parts.iter().enumerate() {
         let delay = if index == 0 { initial } else { interval };
-        out.push((delay, sse_data(json!({
-            "id":"fake-completion", "object":"chat.completion.chunk", "created":now_secs(), "model":model_name(body),
-            "choices":[{"index":0,"delta":{"content":part},"finish_reason":null}]
+        out.push((delay, named_data("content_block_delta", json!({
+            "type":"content_block_delta","index":text_index,"delta":{"type":"text_delta","text":part}
         }))));
     }
-    let annotations = pdf_annotations(body);
-    let mut final_chunk = json!({
-        "id":"fake-completion", "object":"chat.completion.chunk", "created":now_secs(), "model":model_name(body),
-        "choices":[{"index":0,"delta":{},"finish_reason":"stop"}],
-        "usage":{"prompt_tokens":12,"completion_tokens":parts.len() as u64,"total_tokens":12 + parts.len() as u64,"cost":0.0003}
-    });
-    if !annotations.is_empty() {
-        final_chunk["choices"][0]["message"] = json!({"annotations":annotations});
-    }
-    out.push((interval, sse_data(final_chunk)));
-    out.push((Duration::ZERO, Event::default().data("[DONE]")));
+    out.push((
+        interval,
+        named_data(
+            "content_block_stop",
+            json!({"type":"content_block_stop","index":text_index}),
+        ),
+    ));
+    out.push((interval, named_data("message_delta", json!({
+        "type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},
+        "usage":{"input_tokens":12,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":parts.len(),"output_tokens_details":{"thinking_tokens":2},"cost":0.0003}
+    }))));
+    out.push((
+        Duration::ZERO,
+        named_data("message_stop", json!({"type":"message_stop"})),
+    ));
+    out.push((
+        Duration::ZERO,
+        Event::default().event("data").data("[DONE]"),
+    ));
     out
-}
-
-fn pdf_annotations(body: &Value) -> Vec<Value> {
-    body.get("messages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|message| message.get("content").and_then(Value::as_array))
-        .flatten()
-        .filter(|part| part.get("type").and_then(Value::as_str) == Some("file"))
-        .filter_map(|part| part.pointer("/file/filename").and_then(Value::as_str))
-        .map(|name| json!({
-            "type":"file",
-            "file":{"hash":format!("fake-{name}"),"name":name,"content":[{"type":"text","text":format!("Parsed {name}")}]}
-        }))
-        .collect()
 }
 
 fn split_reply(reply: &str, max_chunks: usize) -> Vec<String> {
@@ -322,8 +610,8 @@ fn split_reply_exact(reply: &str, count: usize) -> Vec<String> {
         .collect()
 }
 
-fn sse_data(value: Value) -> Event {
-    Event::default().data(value.to_string())
+fn named_data(event: &str, value: Value) -> Event {
+    Event::default().event(event).data(value.to_string())
 }
 fn model_name(body: &Value) -> &str {
     body.get("model")
@@ -371,10 +659,16 @@ fn title_completion(body: &Value, text: &str) -> Value {
         .trim()
         .to_owned();
     let title = cleaned.chars().take(60).collect::<String>();
+    let split_index = title.chars().count() / 2;
+    let split = title
+        .char_indices()
+        .nth(split_index)
+        .map_or(title.len(), |(index, _)| index);
+    let (first, second) = title.split_at(split);
     json!({
-        "id":"fake-title", "object":"chat.completion", "created":now_secs(), "model":model_name(body),
-        "choices":[{"index":0,"message":{"role":"assistant","content":title},"finish_reason":"stop"}],
-        "usage":{"prompt_tokens":8,"completion_tokens":title.len() as u64,"total_tokens":8 + title.len() as u64,"cost":0.00001}
+        "id":"msg-fake-title", "type":"message", "role":"assistant", "model":model_name(body),
+        "content":[{"type":"text","text":first},{"type":"text","text":second}],
+        "stop_reason":"end_turn","usage":{"input_tokens":8,"output_tokens":title.len() as u64,"cost":0.00001}
     })
 }
 

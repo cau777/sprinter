@@ -2,7 +2,7 @@
 
 Sprinter is a self-hosted AI chat application. It serves the web app and API from one
 container and stores its SQLite database, uploads, and logs under `DATA_DIR`.
-OpenRouter is used for model discovery and chat completions; the API key is encrypted
+OpenRouter is used for model discovery and chat generation; the API key is encrypted
 before it is stored.
 
 ## Run with Docker

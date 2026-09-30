@@ -7,6 +7,7 @@ test("reattaches after reload, shows thinking, and stops a reply", async ({ page
   await composer.press("Enter");
   await expect(page.getByText("THINKING…")).toBeVisible();
   await expect(page.getByText("You said: Give me a considered answer.", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("internal thought", { exact: true })).toHaveCount(0);
 
   await composer.fill("[[slow]] Please keep streaming after a reload.");
   await composer.press("Enter");
@@ -27,6 +28,6 @@ test("shows provider errors and offers a retry", async ({ page }) => {
   const composer = page.getByRole("textbox", { name: "Message" });
   await composer.fill("[[error]] Show the provider error.");
   await composer.press("Enter");
-  await expect(page.locator(".chat-message-error")).toContainText(/rate limited/i, { timeout: 10_000 });
-  await expect(page.getByRole("button", { name: /Retry/ })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(/rate limited/i, { timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
 });

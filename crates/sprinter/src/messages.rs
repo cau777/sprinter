@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error as ThisError;
@@ -36,6 +36,20 @@ pub struct MessageRecord {
     #[ts(type = "number | null")]
     pub reasoning_tokens: Option<i64>,
     pub cost: Option<f64>,
+    #[serde(with = "crate::tools::string_vec_column")]
+    #[ts(type = "Array<string> | null")]
+    pub tools: Option<String>,
+    #[serde(with = "crate::tools::citation_vec_column")]
+    #[ts(type = "Array<Citation> | null")]
+    pub citations: Option<String>,
+    #[serde(with = "crate::tools::tool_step_vec_column")]
+    #[ts(type = "Array<ToolStep> | null")]
+    pub tool_steps: Option<String>,
+    #[ts(type = "number | null")]
+    pub web_search_requests: Option<i64>,
+    pub tool_cost: Option<f64>,
+    #[serde(default)]
+    pub tool_fallback: bool,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]
@@ -55,23 +69,52 @@ pub struct MessageAttachment {
     pub mime: String,
     #[ts(type = "number")]
     pub size: i64,
-    pub pdf_engine: Option<String>,
-    pub parse_cache: Option<String>,
+    #[ts(type = "number | null")]
+    pub text_chars: Option<i64>,
+    #[ts(type = "number | null")]
+    pub text_pages: Option<i64>,
+    #[ts(type = "number | null")]
+    pub text_empty_pages: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SendMessageRequest {
     pub parent_id: Option<String>,
     pub content: String,
     #[serde(default)]
     pub attachment_ids: Vec<String>,
     pub model: Option<String>,
-    pub pdf_engine: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SendMessageApiRequest {
+    pub parent_id: Option<String>,
+    pub content: String,
+    #[serde(default)]
+    pub attachment_ids: Vec<String>,
+    pub model: Option<String>,
+    pub timezone: Option<String>,
+    pub tools: Option<Vec<String>>,
+}
+
+impl SendMessageApiRequest {
+    fn into_message(self) -> SendMessageRequest {
+        SendMessageRequest {
+            parent_id: self.parent_id,
+            content: self.content,
+            attachment_ids: self.attachment_ids,
+            model: self.model,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegenerateRequest {
     pub model: Option<String>,
+    pub timezone: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -97,7 +140,10 @@ pub struct PreparedGeneration {
     pub assistant_message: MessageRecord,
     pub model: String,
     pub prompt: Vec<PromptMessage>,
-    pub pdf_engine: Option<String>,
+    pub selected_tools: Vec<String>,
+    pub active_tools: Vec<String>,
+    pub web_search_only: Vec<String>,
+    pub timezone: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -130,9 +176,17 @@ async fn send_handler(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
     headers: HeaderMap,
-    Json(request): Json<SendMessageRequest>,
+    Json(request): Json<SendMessageApiRequest>,
 ) -> Result<Json<SendMessageResponse>, MessageApiError> {
     let request_id = auth::request_id(&headers);
+    if request.tools.is_some() {
+        return Err(MessageApiError::new(
+            &headers,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Update chat tools with PATCH /api/chats/:id",
+        ));
+    }
     if request
         .model
         .as_ref()
@@ -146,9 +200,12 @@ async fn send_handler(
         ));
     }
     let key = preflight_key(&state, &headers).await?;
-    let prepared = send_to_chat(&state.pool, &chat_id, request)
-        .await
-        .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    let timezone = request.timezone.clone();
+    let mut prepared =
+        send_to_chat_with_options(&state.pool, &chat_id, request.into_message(), timezone)
+            .await
+            .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    prepare_tools(&state, &mut prepared).await;
     match state
         .generation
         .start(&state, prepared.clone(), key, Some(request_id))
@@ -172,7 +229,7 @@ async fn send_handler(
 async fn send_new_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<SendMessageRequest>,
+    Json(request): Json<SendMessageApiRequest>,
 ) -> Result<Json<NewChatMessageResponse>, MessageApiError> {
     let request_id = auth::request_id(&headers);
     if request
@@ -199,9 +256,18 @@ async fn send_new_handler(
             "Choose a default model in Settings",
         ));
     }
-    let prepared = send_new_chat(&state.pool, default_model.as_deref(), request)
-        .await
-        .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    let timezone = request.timezone.clone();
+    let tools = request.tools.clone().unwrap_or_default();
+    let mut prepared = send_new_chat_with_options(
+        &state.pool,
+        default_model.as_deref(),
+        request.into_message(),
+        tools,
+        timezone,
+    )
+    .await
+    .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    prepare_tools(&state, &mut prepared).await;
     let chat = match chats::get_chat(&state.pool, &prepared.chat_id).await {
         Ok(Some(chat)) => chat,
         _ => {
@@ -252,9 +318,15 @@ async fn regenerate_handler(
         ));
     }
     let key = preflight_key(&state, &headers).await?;
-    let prepared = regenerate(&state.pool, &message_id, request.model.as_deref())
-        .await
-        .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    let mut prepared = regenerate_with_timezone(
+        &state.pool,
+        &message_id,
+        request.model.as_deref(),
+        request.timezone,
+    )
+    .await
+    .map_err(|error| MessageApiError::from_message(error, &headers))?;
+    prepare_tools(&state, &mut prepared).await;
     match state
         .generation
         .start(&state, prepared.clone(), key, Some(request_id))
@@ -270,6 +342,15 @@ async fn regenerate_handler(
             Err(MessageApiError::from_generation(error, &headers))
         }
     }
+}
+
+async fn prepare_tools(state: &AppState, prepared: &mut PreparedGeneration) {
+    let config =
+        settings::tool_request_config(state, &prepared.model, &prepared.selected_tools).await;
+    prepared.active_tools = config.enabled;
+    prepared.web_search_only = config.web_search_only;
+    prepared.assistant_message.tools =
+        Some(serde_json::to_string(&prepared.active_tools).expect("tool list serializes"));
 }
 
 async fn preflight_key(
@@ -292,6 +373,7 @@ struct MessageApiError {
     code: &'static str,
     message: &'static str,
     request_id: String,
+    extra: Option<serde_json::Value>,
 }
 
 impl MessageApiError {
@@ -306,6 +388,7 @@ impl MessageApiError {
             code,
             message,
             request_id: auth::request_id(headers),
+            extra: None,
         }
     }
 
@@ -362,12 +445,30 @@ impl MessageApiError {
                 "attachments_too_large",
                 "Attachments in this prompt exceed the configured limit",
             ),
-            MessageError::InvalidPdfEngine => Self::new(
+            MessageError::PdfTextMissing(upload_ids) => {
+                let mut error = Self::new(
+                    headers,
+                    StatusCode::CONFLICT,
+                    "pdf_text_missing",
+                    "Text has not been extracted from one or more attached PDFs",
+                );
+                error.extra = Some(serde_json::json!({"upload_ids": upload_ids}));
+                error
+            }
+            MessageError::InvalidTools(crate::tools::ToolValidationError::Unknown) => Self::new(
                 headers,
                 StatusCode::BAD_REQUEST,
-                "invalid_pdf_engine",
-                "The PDF parser engine is invalid",
+                "unknown_tool",
+                "One or more tools are not supported by Sprinter",
             ),
+            MessageError::InvalidTools(crate::tools::ToolValidationError::Incompatible) => {
+                Self::new(
+                    headers,
+                    StatusCode::BAD_REQUEST,
+                    "incompatible_tools",
+                    "Web search and Bash cannot be enabled together",
+                )
+            }
             MessageError::GenerationInProgress => Self::new(
                 headers,
                 StatusCode::CONFLICT,
@@ -411,11 +512,18 @@ impl MessageApiError {
 
 impl IntoResponse for MessageApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({"error":{"code":self.code,"message":self.message,"request_id":self.request_id}})),
-        )
-            .into_response()
+        let mut error = serde_json::json!({
+            "code": self.code,
+            "message": self.message,
+            "request_id": self.request_id,
+        });
+        if let Some(extra) = self.extra.and_then(|value| value.as_object().cloned()) {
+            error
+                .as_object_mut()
+                .expect("error is an object")
+                .extend(extra);
+        }
+        (self.status, Json(serde_json::json!({"error": error}))).into_response()
     }
 }
 
@@ -437,8 +545,10 @@ pub enum MessageError {
     TooManyAttachments,
     #[error("attachments exceed the prompt size limit")]
     PromptTooLarge,
-    #[error("PDF parser engine is invalid")]
-    InvalidPdfEngine,
+    #[error("text has not been extracted from one or more attached PDFs")]
+    PdfTextMissing(Vec<String>),
+    #[error("invalid tools")]
+    InvalidTools(crate::tools::ToolValidationError),
     #[error("a generation is already active in this chat")]
     GenerationInProgress,
     #[error("default model is not configured")]
@@ -453,11 +563,11 @@ pub async fn get_chat_messages(
 ) -> Result<Vec<MessageRecord>, MessageError> {
     let mut messages = sqlx::query_as::<_, MessageRecord>(
         "SELECT id, chat_id, parent_id, role, content, status, error, model, generation_id, finish_reason, \
-                prompt_tokens, completion_tokens, reasoning_tokens, cost, created_at, updated_at \
+                prompt_tokens, completion_tokens, reasoning_tokens, cost, tools, citations, tool_steps, web_search_requests, tool_cost, tool_fallback, created_at, updated_at \
          FROM messages WHERE chat_id = ? ORDER BY created_at, id",
     ).bind(chat_id).fetch_all(pool).await?;
-    let attachments = sqlx::query_as::<_, (String, String, i64, String, String, String, i64, Option<String>, Option<String>)>(
-        "SELECT ma.message_id, ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, ma.pdf_engine, ma.parse_cache \
+    let attachments = sqlx::query_as::<_, (String, String, i64, String, String, String, i64, Option<i64>, Option<i64>, Option<i64>)>(
+        "SELECT ma.message_id, ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, u.text_chars, u.text_pages, u.text_empty_pages \
          FROM message_attachments ma JOIN messages m ON m.id = ma.message_id JOIN uploads u ON u.id = ma.upload_id \
          WHERE m.chat_id = ? ORDER BY ma.message_id, ma.position",
     )
@@ -465,8 +575,18 @@ pub async fn get_chat_messages(
     .fetch_all(pool)
     .await?;
     let mut by_message: HashMap<String, Vec<MessageAttachment>> = HashMap::new();
-    for (message_id, upload_id, position, filename, kind, mime, size, pdf_engine, parse_cache) in
-        attachments
+    for (
+        message_id,
+        upload_id,
+        position,
+        filename,
+        kind,
+        mime,
+        size,
+        text_chars,
+        text_pages,
+        text_empty_pages,
+    ) in attachments
     {
         by_message
             .entry(message_id)
@@ -478,8 +598,9 @@ pub async fn get_chat_messages(
                 kind,
                 mime,
                 size,
-                pdf_engine,
-                parse_cache,
+                text_chars,
+                text_pages,
+                text_empty_pages,
             });
     }
     for message in &mut messages {
@@ -493,18 +614,30 @@ pub async fn send_to_chat(
     chat_id: &str,
     request: SendMessageRequest,
 ) -> Result<PreparedGeneration, MessageError> {
+    send_to_chat_with_options(pool, chat_id, request, None).await
+}
+
+pub async fn send_to_chat_with_options(
+    pool: &SqlitePool,
+    chat_id: &str,
+    request: SendMessageRequest,
+    timezone: Option<String>,
+) -> Result<PreparedGeneration, MessageError> {
     validate_message_content(&request.content)?;
     let mut tx = pool.begin().await?;
     acquire_chat_write_lock(&mut tx, chat_id).await?;
-    let chat_model = sqlx::query_scalar::<_, String>("SELECT model FROM chats WHERE id = ?")
-        .bind(chat_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(MessageError::NotFound)?;
+    let (chat_model, raw_tools) =
+        sqlx::query_as::<_, (String, String)>("SELECT model, tools FROM chats WHERE id = ?")
+            .bind(chat_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(MessageError::NotFound)?;
     ensure_idle(&mut tx, chat_id).await?;
     validate_parent(&mut tx, chat_id, request.parent_id.as_deref()).await?;
     let model = request.model.clone().unwrap_or(chat_model);
-    let generation = insert_exchange(&mut tx, chat_id, request, model).await?;
+    let selected_tools = crate::tools::decode_json_column(Some(&raw_tools));
+    let generation =
+        insert_exchange(&mut tx, chat_id, request, model, selected_tools, timezone).await?;
     tx.commit().await?;
     Ok(generation)
 }
@@ -514,7 +647,18 @@ pub async fn send_new_chat(
     default_model: Option<&str>,
     request: SendMessageRequest,
 ) -> Result<PreparedGeneration, MessageError> {
+    send_new_chat_with_options(pool, default_model, request, Vec::new(), None).await
+}
+
+pub async fn send_new_chat_with_options(
+    pool: &SqlitePool,
+    default_model: Option<&str>,
+    request: SendMessageRequest,
+    tools: Vec<String>,
+    timezone: Option<String>,
+) -> Result<PreparedGeneration, MessageError> {
     validate_message_content(&request.content)?;
+    crate::tools::validate_enabled_tools(&tools).map_err(MessageError::InvalidTools)?;
     if request.parent_id.is_some() {
         return Err(MessageError::InvalidParent);
     }
@@ -524,16 +668,21 @@ pub async fn send_new_chat(
         .or_else(|| default_model.map(str::to_owned))
         .ok_or(MessageError::NoDefaultModel)?;
     let id = Uuid::now_v7().to_string();
+    let session_id = chats::new_session_id();
     let now = now_ms();
     let mut tx = pool.begin().await?;
-    sqlx::query("INSERT INTO chats(id, model, created_at, updated_at) VALUES(?, ?, ?, ?)")
-        .bind(&id)
-        .bind(&model)
-        .bind(now)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-    let mut generation = insert_exchange(&mut tx, &id, request, model).await?;
+    sqlx::query(
+        "INSERT INTO chats(id, session_id, model, tools, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(session_id)
+    .bind(&model)
+    .bind(serde_json::to_string(&tools).expect("tool list serializes"))
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    let mut generation = insert_exchange(&mut tx, &id, request, model, tools, timezone).await?;
     generation.created_chat = true;
     tx.commit().await?;
     Ok(generation)
@@ -543,6 +692,15 @@ pub async fn regenerate(
     pool: &SqlitePool,
     original_assistant_id: &str,
     override_model: Option<&str>,
+) -> Result<PreparedGeneration, MessageError> {
+    regenerate_with_timezone(pool, original_assistant_id, override_model, None).await
+}
+
+pub async fn regenerate_with_timezone(
+    pool: &SqlitePool,
+    original_assistant_id: &str,
+    override_model: Option<&str>,
+    timezone: Option<String>,
 ) -> Result<PreparedGeneration, MessageError> {
     let chat_id = sqlx::query_scalar::<_, String>("SELECT chat_id FROM messages WHERE id = ?")
         .bind(original_assistant_id)
@@ -563,17 +721,20 @@ pub async fn regenerate(
     }
     ensure_idle(&mut tx, &original.1).await?;
     validate_parent(&mut tx, &original.1, original.2.as_deref()).await?;
-    let chat_model = sqlx::query_scalar::<_, String>("SELECT model FROM chats WHERE id = ?")
-        .bind(&original.1)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(MessageError::NotFound)?;
+    let (chat_model, raw_tools) =
+        sqlx::query_as::<_, (String, String)>("SELECT model, tools FROM chats WHERE id = ?")
+            .bind(&original.1)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(MessageError::NotFound)?;
     let model = override_model.unwrap_or(&chat_model).to_owned();
+    let selected_tools = crate::tools::decode_json_column(Some(&raw_tools));
     let previous_leaf_id = current_leaf(&mut tx, &original.1).await?;
     let parent_id = original.2;
     let assistant_id = Uuid::now_v7().to_string();
     let now = now_ms();
     let prompt = prompt_path(&mut tx, &original.1, parent_id.as_deref()).await?;
+    ensure_pdf_text(&mut tx, &prompt, &[]).await?;
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, model, created_at, updated_at) \
          VALUES(?, ?, ?, 'assistant', '', 'streaming', ?, ?, ?)",
@@ -597,7 +758,10 @@ pub async fn regenerate(
         assistant_message: assistant,
         model,
         prompt,
-        pdf_engine: None,
+        selected_tools,
+        active_tools: Vec::new(),
+        web_search_only: Vec::new(),
+        timezone,
     })
 }
 
@@ -642,34 +806,30 @@ async fn insert_exchange(
     chat_id: &str,
     request: SendMessageRequest,
     model: String,
+    selected_tools: Vec<String>,
+    timezone: Option<String>,
 ) -> Result<PreparedGeneration, MessageError> {
-    if request
-        .pdf_engine
-        .as_deref()
-        .is_some_and(|engine| !matches!(engine, "cloudflare-ai" | "mistral-ocr" | "native"))
-    {
-        return Err(MessageError::InvalidPdfEngine);
-    }
     let now = now_ms();
     let user_id = Uuid::now_v7().to_string();
     let assistant_id = Uuid::now_v7().to_string();
     let previous_leaf_id = current_leaf(tx, chat_id).await?;
     let prompt = prompt_path(tx, chat_id, request.parent_id.as_deref()).await?;
-    let attachment_kinds = validate_attachments(tx, &prompt, &request.attachment_ids).await?;
-    let stored_pdf_engine = request
-        .pdf_engine
-        .clone()
-        .or(read_default_pdf_engine(tx).await?);
+    validate_attachments(tx, &prompt, &request.attachment_ids).await?;
+    ensure_pdf_text(tx, &prompt, &request.attachment_ids).await?;
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, created_at, updated_at) \
          VALUES(?, ?, ?, 'user', ?, 'complete', ?, ?)",
     ).bind(&user_id).bind(chat_id).bind(&request.parent_id).bind(&request.content).bind(now).bind(now)
         .execute(&mut **tx).await?;
     for (position, upload_id) in request.attachment_ids.iter().enumerate() {
-        sqlx::query("INSERT INTO message_attachments(message_id, upload_id, position, pdf_engine) VALUES(?, ?, ?, ?)")
-            .bind(&user_id).bind(upload_id).bind(position as i64)
-            .bind(if attachment_kinds.get(upload_id).map(String::as_str) == Some("pdf") { stored_pdf_engine.as_deref() } else { None })
-            .execute(&mut **tx).await?;
+        sqlx::query(
+            "INSERT INTO message_attachments(message_id, upload_id, position) VALUES(?, ?, ?)",
+        )
+        .bind(&user_id)
+        .bind(upload_id)
+        .bind(position as i64)
+        .execute(&mut **tx)
+        .await?;
     }
     sqlx::query(
         "INSERT INTO messages(id, chat_id, parent_id, role, content, status, model, created_at, updated_at) \
@@ -703,7 +863,10 @@ async fn insert_exchange(
         assistant_message,
         model,
         prompt,
-        pdf_engine: request.pdf_engine,
+        selected_tools,
+        active_tools: Vec::new(),
+        web_search_only: Vec::new(),
+        timezone,
     })
 }
 
@@ -762,14 +925,40 @@ async fn validate_attachments(
     Ok(kinds)
 }
 
-async fn read_default_pdf_engine(
+async fn ensure_pdf_text(
     tx: &mut Transaction<'_, Sqlite>,
-) -> Result<Option<String>, MessageError> {
-    let raw: Option<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key = 'pdf_engine'")
+    prompt: &[PromptMessage],
+    new_ids: &[String],
+) -> Result<(), MessageError> {
+    let mut seen = HashSet::new();
+    let mut missing = Vec::new();
+    for id in prompt
+        .iter()
+        .flat_map(|message| message.attachment_ids.iter())
+        .chain(new_ids)
+    {
+        if !seen.insert(id.as_str()) {
+            continue;
+        }
+        let (kind, text_chars, text_pages, text_empty_pages) =
+            sqlx::query_as::<_, (String, Option<i64>, Option<i64>, Option<i64>)>(
+                "SELECT kind, text_chars, text_pages, text_empty_pages FROM uploads WHERE id = ?",
+            )
+            .bind(id)
             .fetch_optional(&mut **tx)
-            .await?;
-    Ok(raw.and_then(|value| serde_json::from_str(&value).ok()))
+            .await?
+            .ok_or(MessageError::InvalidAttachments)?;
+        if kind == "pdf"
+            && (text_chars.is_none() || text_pages.is_none() || text_empty_pages.is_none())
+        {
+            missing.push(id.clone());
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(MessageError::PdfTextMissing(missing))
+    }
 }
 
 async fn current_leaf(
@@ -915,12 +1104,12 @@ async fn get_message_tx(
 ) -> Result<Option<MessageRecord>, MessageError> {
     let mut message = sqlx::query_as::<_, MessageRecord>(
         "SELECT id, chat_id, parent_id, role, content, status, error, model, generation_id, finish_reason, \
-                prompt_tokens, completion_tokens, reasoning_tokens, cost, created_at, updated_at \
+                prompt_tokens, completion_tokens, reasoning_tokens, cost, tools, citations, tool_steps, web_search_requests, tool_cost, tool_fallback, created_at, updated_at \
          FROM messages WHERE id = ?",
     ).bind(id).fetch_optional(&mut **tx).await?;
     if let Some(message) = message.as_mut() {
         message.attachments = sqlx::query_as::<_, MessageAttachment>(
-            "SELECT ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, ma.pdf_engine, ma.parse_cache \
+            "SELECT ma.upload_id, ma.position, u.filename, u.kind, u.mime, u.size, u.text_chars, u.text_pages, u.text_empty_pages \
              FROM message_attachments ma JOIN uploads u ON u.id = ma.upload_id \
              WHERE ma.message_id = ? ORDER BY ma.position",
         ).bind(id).fetch_all(&mut **tx).await?;
@@ -937,9 +1126,40 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SendMessageRequest, regenerate, send_new_chat, send_to_chat, switch_branch};
+    use super::{
+        MessageApiError, MessageError, SendMessageRequest, regenerate, send_new_chat, send_to_chat,
+        switch_branch,
+    };
     use crate::db;
+    use axum::{
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+    };
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+
+    #[test]
+    fn removed_pdf_engine_is_rejected_and_missing_text_error_lists_uploads() {
+        assert!(
+            serde_json::from_value::<SendMessageRequest>(serde_json::json!({
+                "parent_id": null,
+                "content": "read this",
+                "pdf_engine": "native"
+            }))
+            .is_err()
+        );
+
+        let error = MessageApiError::from_message(
+            MessageError::PdfTextMissing(vec!["upload-1".into(), "upload-2".into()]),
+            &HeaderMap::new(),
+        );
+        assert_eq!(error.status, StatusCode::CONFLICT);
+        assert_eq!(
+            error.extra.as_ref().unwrap()["upload_ids"],
+            serde_json::json!(["upload-1", "upload-2"])
+        );
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
 
     #[tokio::test]
     async fn edits_regeneration_and_switch_preserve_the_message_tree_and_prompt_path() {
@@ -1023,7 +1243,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_validates_attachment_limits_and_records_the_effective_pdf_engine() {
+    async fn send_validates_attachment_limits_and_requires_extracted_pdf_text() {
         let pool = test_pool().await;
         let limits = serde_json::json!({
             "image_bytes": 1024, "pdf_bytes": 1024, "text_bytes": 1024,
@@ -1034,13 +1254,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO settings(key, value, updated_at) VALUES('pdf_engine', ?, 1)")
-            .bind(serde_json::to_string("mistral-ocr").unwrap())
-            .execute(&pool)
-            .await
-            .unwrap();
         for (id, filename) in [("upload-one", "one.pdf"), ("upload-two", "two.pdf")] {
-            sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at) VALUES(?, ?, ?, 'application/pdf', 'pdf', 100, 1)")
+            sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at, text_chars, text_pages, text_empty_pages) VALUES(?, ?, ?, 'application/pdf', 'pdf', 100, 1, 40, 1, 0)")
                 .bind(id).bind(id.repeat(32)).bind(filename).execute(&pool).await.unwrap();
         }
         let mut invalid = request(None, "hi");
@@ -1063,13 +1278,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(prepared.prompt[0].attachment_ids, ["upload-one"]);
-        let engine: Option<String> = sqlx::query_scalar(
-            "SELECT pdf_engine FROM message_attachments WHERE upload_id = 'upload-one'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(engine.as_deref(), Some("mistral-ocr"));
+        assert_eq!(
+            prepared.user_message.as_ref().unwrap().attachments[0].text_chars,
+            Some(40)
+        );
+
+        sqlx::query("INSERT INTO uploads(id, sha256, filename, mime, kind, size, created_at) VALUES('old-pdf', 'old-pdf-hash', 'old.pdf', 'application/pdf', 'pdf', 100, 1)")
+            .execute(&pool).await.unwrap();
+        let mut missing_text = request(None, "read this");
+        missing_text.attachment_ids.push("old-pdf".into());
+        assert!(matches!(
+            send_new_chat(&pool, Some("test/chat"), missing_text).await,
+            Err(super::MessageError::PdfTextMissing(ids)) if ids == ["old-pdf"]
+        ));
 
         let oversized = request(None, &"x".repeat(256 * 1024 + 1));
         assert!(matches!(
@@ -1085,7 +1306,6 @@ mod tests {
             content: content.to_owned(),
             attachment_ids: Vec::new(),
             model: None,
-            pdf_engine: None,
         }
     }
 
