@@ -401,6 +401,7 @@ button { color: inherit; }
 .spike-state { display: flex; justify-content: space-between; gap: 15px; color: #6e7a90; font: 11px "JetBrains Mono",monospace; margin: 9px 2px 0; }
 
 @media (max-width: 720px) {
+  .chat-message-tools .button.message-action { width: 32px !important; min-width: 32px !important; padding: 0 !important; justify-content: center; }
   .prompt-suggestions { grid-template-columns: 1fr; width: min(100%, 410px); margin: 0 auto; gap: 7px; }
   .spike-page { padding: 18px 13px calc(13px + env(safe-area-inset-bottom)); }
   .settings-page { padding: 20px 14px calc(30px + env(safe-area-inset-bottom)); }

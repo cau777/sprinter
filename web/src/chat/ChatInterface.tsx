@@ -490,11 +490,11 @@ export function ChatInterface({ chatId, messageId }: Props) {
               <div className="chat-message-tools mt-[9px] flex items-center gap-[9px] text-slate-500">
                 {user && original && <>
                   {online && <ActionBarPrimitive.Root><ActionBarPrimitive.Edit onClick={() => beginEdit(original)}>Edit</ActionBarPrimitive.Edit></ActionBarPrimitive.Root>}
-                  <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</Button>
+                  <Button variant="ghost" className="message-action gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /><span className="max-[720px]:hidden">{copiedMessageId === message.id ? "Copied" : "Copy"}</span></Button>
                 </>}
                 {!user && item?.generationStatus !== "streaming" && <>
-                  {original && <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /> {copiedMessageId === message.id ? "Copied" : "Copy"}</Button>}
-                  <Button variant="ghost" className="gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" onPress={() => retry.mutate({ messageId: message.id })} isDisabled={!online || retry.isPending}><RotateCw size={12} /> Retry</Button>
+                  {original && <Button variant="ghost" className="message-action gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label={copiedMessageId === message.id ? "Message copied" : "Copy message"} onPress={() => void copyMessage(original)}><Copy size={12} /><span className="max-[720px]:hidden">{copiedMessageId === message.id ? "Copied" : "Copy"}</span></Button>}
+                  <Button variant="ghost" className="message-action gap-1 rounded px-1.5 py-1 text-[9px] text-slate-400 hover:text-[var(--accent)]" aria-label="Retry response" onPress={() => retry.mutate({ messageId: message.id })} isDisabled={!online || retry.isPending}><RotateCw size={12} /><span className="max-[720px]:hidden">Retry</span></Button>
                 </>}
                 {siblings.length > 1 && <div className="ml-auto inline-flex items-center gap-[3px] font-mono text-[10px] text-slate-300" aria-label={`${user ? "User" : "Assistant"} branch`}>
                   <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Previous branch for message ${message.id}`} isDisabled={!online || branchIndex <= 0 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex - 1].id)}>‹</Button>
@@ -538,7 +538,6 @@ export function ChatInterface({ chatId, messageId }: Props) {
             </div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span><Button isIconOnly variant="secondary" className="composer-attach-control" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={17} /></Button>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>
         </ComposerPrimitive.Root>
       </AssistantRuntimeProvider>
-      <p className="mt-2 mb-0 text-center text-[9px] text-slate-600">Sprinter can make mistakes. Check important information.</p>
     </div>
   </section>;
 }
