@@ -49,6 +49,25 @@ pub enum ToolValidationError {
     Incompatible,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{BASH, WEB_SEARCH, validate_enabled_tools};
+
+    #[test]
+    fn web_search_and_bash_cannot_be_combined() {
+        assert_eq!(
+            validate_enabled_tools(&[WEB_SEARCH.into(), BASH.into()]),
+            Err(super::ToolValidationError::Incompatible)
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_and_duplicate_tools() {
+        assert!(validate_enabled_tools(&["unknown".into()]).is_err());
+        assert!(validate_enabled_tools(&[WEB_SEARCH.into(), WEB_SEARCH.into()]).is_err());
+    }
+}
+
 pub fn decode_json_column<T: for<'de> Deserialize<'de>>(value: Option<&str>) -> T
 where
     T: Default,

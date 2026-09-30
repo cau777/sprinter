@@ -22,8 +22,9 @@ import { deleteUpload, fetchPdfFile, storePdfText, uploadFile, type PdfTextStats
 import { extractPdfText, isPasswordProtectedPdfError, type ExtractedPdfText, pdfExtractionErrorMessage } from "../pdf/extractText";
 import { reportClientError } from "../clientErrors";
 import { useOnlineStatus } from "../api/useOnlineStatus";
-import { Button, Tooltip } from "@heroui/react";
+import { Button, ToggleButton, Tooltip } from "@heroui/react";
 import { WEB_SEARCH, BASH, toolLabel } from "./toolCatalog";
+import { setToolSelection } from "./toolSelection";
 import { useMessagePartText } from "@assistant-ui/react";
 import { MarkdownContent } from "./MarkdownText";
 import type { Citation, ToolStep } from "../api/types.gen";
@@ -114,6 +115,7 @@ export function ChatInterface({ chatId, messageId }: Props) {
   const [searchHighlight, setSearchHighlight] = useState<string | null>(null);
   const [draftTools, setDraftTools] = useState<string[]>([]);
   const [savingTools, setSavingTools] = useState(false);
+  const [upstreamToolsOpen, setUpstreamToolsOpen] = useState(false);
   const handledSearchTarget = useRef<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const detail = chatQuery.data;
@@ -125,8 +127,8 @@ export function ChatInterface({ chatId, messageId }: Props) {
     tool.coverage !== "none" && (tool.id === WEB_SEARCH || tool.id === BASH),
   );
 
-  const toggleTool = (id: string) => {
-    const next = selectedTools.includes(id) ? selectedTools.filter((tool) => tool !== id) : [id];
+  const setTool = (id: string, enabled: boolean) => {
+    const next = setToolSelection(selectedTools, id, enabled);
     if (!chatId) {
       setDraftTools(next);
       return;
@@ -498,10 +500,10 @@ export function ChatInterface({ chatId, messageId }: Props) {
                 </>}
                 {siblings.length > 1 && <div className="ml-auto inline-flex items-center gap-[3px] font-mono text-[10px] text-slate-300" aria-label={`${user ? "User" : "Assistant"} branch`}>
                   <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Previous branch for message ${message.id}`} isDisabled={!online || branchIndex <= 0 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex - 1].id)}>‹</Button>
-                  <span>{branchIndex + 1} / {siblings.length}</span>
+                  <span className="whitespace-nowrap">{branchIndex + 1} / {siblings.length}</span>
                   <Button isIconOnly variant="ghost" className="h-7 w-7 text-lg leading-none text-slate-400" aria-label={`Next branch for message ${message.id}`} isDisabled={!online || branchIndex >= siblings.length - 1 || switchMutation.isPending} onPress={() => switchMutation.mutate(siblings[branchIndex + 1].id)}>›</Button>
                 </div>}
-                {!user && original && hasFooterDetails(original) && <span className="ml-auto whitespace-nowrap font-mono text-[8px] text-slate-500" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
+                {!user && original && hasFooterDetails(original) && <span className="ml-auto min-w-0 max-w-full break-words whitespace-normal text-right font-mono text-[8px] text-slate-500 max-[720px]:ml-0 max-[720px]:basis-full max-[720px]:text-left" aria-label={usageLabel(original)}>{usageSummary(original)}</span>}
               </div>
             </MessagePrimitive.Root>;
           }}</ThreadPrimitive.Messages>
@@ -526,13 +528,15 @@ export function ChatInterface({ chatId, messageId }: Props) {
                 ? `Runs inside the selected provider under zero data retention routing. ~$0.01 per search.${incompatible ? " Can't be combined with Bash: search could run through a third-party engine." : ""}`
                 : "Runs commands in an OpenRouter sandbox with no internet access. Files persist within this chat. ~$0.003 per session start.";
               const Icon = tool.id === WEB_SEARCH ? Globe : SquareTerminal;
+              const button = <ToggleButton variant="ghost" className="tool-pill" isSelected={enabled} aria-label={`${toolLabel(tool.id)}${enabled ? " enabled" : " disabled"}`} isDisabled={!online || Boolean(streamingMessage) || send.isPending || savingTools} onChange={(nextEnabled) => setTool(tool.id, nextEnabled)}><Icon size={14} /><span className="max-[720px]:hidden">{toolLabel(tool.id)}</span></ToggleButton>;
+              if (coarsePointer) return <span key={tool.id} title={title}>{button}</span>;
               return <Tooltip key={tool.id} delay={350}>
-                <Tooltip.Trigger><Button variant="ghost" className={`tool-pill ${enabled ? "tool-pill-on" : ""}`} aria-pressed={enabled} aria-label={`${toolLabel(tool.id)}${enabled ? " enabled" : " disabled"}`} isDisabled={!online || Boolean(streamingMessage) || send.isPending || savingTools} onPress={() => toggleTool(tool.id)}><Icon size={14} /><span className="max-[720px]:hidden">{toolLabel(tool.id)}</span></Button></Tooltip.Trigger>
+                <Tooltip.Trigger>{button}</Tooltip.Trigger>
                 <Tooltip.Content className="z-50 max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] px-2.5 py-2 text-[10px] leading-5 text-slate-200 shadow-xl">{title}</Tooltip.Content>
               </Tooltip>;
             })}
-            {(activeModel?.upstream_tools.length ?? 0) > 0 && <Tooltip delay={350}>
-              <Tooltip.Trigger><Button variant="ghost" className="tool-pill tool-pill-upstream" aria-disabled="true" aria-label={`Supported upstream but not by Sprinter: ${(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")}`}><Plus size={14} /></Button></Tooltip.Trigger>
+            {(activeModel?.upstream_tools.length ?? 0) > 0 && <Tooltip delay={350} isOpen={coarsePointer ? upstreamToolsOpen : undefined} onOpenChange={(open) => { if (coarsePointer) setUpstreamToolsOpen(open); }}>
+              <Tooltip.Trigger><Button variant="ghost" className="tool-pill tool-pill-upstream" aria-disabled="true" aria-label={`Supported upstream but not by Sprinter: ${(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")}`} onPress={() => { if (coarsePointer) setUpstreamToolsOpen(true); }}><Plus size={14} /></Button></Tooltip.Trigger>
               <Tooltip.Content className="z-50 max-w-[280px] rounded-lg border border-[var(--border)] bg-[var(--panel-solid)] px-2.5 py-2 text-[10px] leading-5 text-slate-200 shadow-xl">{(activeModel?.upstream_tools ?? []).map(toolLabel).join(", ")} are supported upstream but not by Sprinter</Tooltip.Content>
             </Tooltip>}
             </div><div className="flex items-center gap-[9px]"><span className="flex items-center gap-1 text-[9px] text-slate-500 max-[720px]:hidden">{online ? "Press enter to send" : "Reconnect to send"}</span><Button isIconOnly variant="secondary" className="composer-attach-control" onPress={() => fileInput.current?.click()} aria-label="Attach files" isDisabled={!online || Boolean(streamingMessage) || send.isPending}><Paperclip size={17} /></Button>{streamingMessage ? <ComposerPrimitive.Cancel className="composer-action-danger" disabled={!online}><Square size={14} /> Stop</ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="composer-action-primary" aria-label="Send message" disabled={!online || pendingUploads.some((item) => item.uploading || Boolean(item.error))}><ArrowUpRight size={17} /></ComposerPrimitive.Send>}</div></div>

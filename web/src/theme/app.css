@@ -223,7 +223,7 @@ button { color: inherit; }
 .chat-message-content p { margin: 0 0 12px; }
 .chat-message-content p:last-child { margin-bottom: 0; }
 .chat-message-content [data-part-type="text"] { white-space: pre-wrap; }
-.button.button--ghost.tool-pill {
+.tool-pill {
   display: inline-flex;
   min-width: 0 !important;
   min-height: 32px !important;
@@ -237,14 +237,16 @@ button { color: inherit; }
   font-weight: 600;
   white-space: nowrap;
 }
-.button.button--ghost.tool-pill:hover { border-color: rgba(61,232,255,.45); color: var(--accent); }
-.button.button--ghost.tool-pill.tool-pill-on {
+.tool-pill[data-selected="true"] {
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--accent);
 }
-.button.button--ghost.tool-pill.tool-pill-upstream { width: 32px !important; padding: 0 !important; color: #8e9bb0; }
-.button.button--ghost.tool-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tool-pill.tool-pill-upstream { width: 32px !important; padding: 0 !important; color: #8e9bb0; }
+@media (hover: hover) and (pointer: fine) {
+  .tool-pill:hover { border-color: rgba(61,232,255,.45); color: var(--accent); }
+  .tool-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
 .citation-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .citation-chips a {
   display: inline-flex;
