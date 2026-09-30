@@ -87,7 +87,6 @@ export function AppShell() {
           <div className="flex items-center gap-2 text-[10px] text-slate-500 max-[720px]:gap-1.5 max-[720px]:text-[9px]">
             {activeChatId && modelsQuery.data && settingsQuery.data && <div className="w-[260px] min-w-0 max-[720px]:w-[min(190px,48vw)]"><ModelPicker compact models={modelsQuery.data.items} value={currentChatQuery.data?.model ?? currentChat?.model ?? null} favorites={settingsQuery.data.favorite_models} isDisabled={!online || modelChange.isPending} onChange={(model) => modelChange.mutate({ chatId: activeChatId, model })} placeholder="Choose model" /></div>}
             {activeChatId && <ChatExportMenu chatId={activeChatId} />}
-            <span className="size-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(74,222,154,.35)] max-[720px]:hidden" /> <span className="max-[720px]:hidden">Local and private</span>
           </div>
         </header>
         <Outlet />
@@ -129,7 +128,6 @@ function SidebarContents({ online, onNavigate, onSearch, onHelp }: { online: boo
     <div className="mt-auto grid gap-1">
       <Link to="/settings" className="sidebar-nav-item" onClick={onNavigate}><Settings2 size={16} /><span>Settings</span></Link>
       <Button variant="ghost" className="sidebar-nav-item" onPress={onHelp}><CircleHelp size={16} /><span>Help & shortcuts</span></Button>
-      <div className="mt-[9px] flex items-center gap-2.5 border-t border-[var(--border)] px-[5px] pt-[15px] pb-1"><div className="grid size-[30px] place-items-center rounded-[10px] bg-[linear-gradient(145deg,#26354d,#152032)] font-display text-xs font-semibold text-slate-300">S</div><div><div className="text-[11px] font-semibold text-slate-200">Sprinter</div><div className="text-[10px] text-slate-500">Private workspace</div></div><Command className="ml-auto text-slate-500" size={15} /></div>
       <Button variant="ghost" className="sidebar-nav-item" onPress={() => void logout()}><LogOut size={15} /><span>Log out</span></Button>
     </div>
   </>;
