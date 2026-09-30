@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
@@ -23,54 +23,65 @@ const pdfAssets = {
   configureServer: copyPdfAssets,
 };
 
-export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-    pdfAssets,
-    VitePWA({
-      registerType: "prompt",
-      includeAssets: ["sprinter.svg", "sprinter-maskable.svg"],
-      manifest: {
-        name: "Sprinter",
-        short_name: "Sprinter",
-        description: "A private, self-hosted AI chat workspace.",
-        theme_color: "#080b12",
-        background_color: "#080b12",
-        display: "standalone",
-        start_url: "/",
-        icons: [
-          { src: "/sprinter.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-          { src: "/sprinter-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
-        ],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const apiTarget = env.VITE_API_PROXY_TARGET || "http://127.0.0.1:8080";
+
+  return {
+    plugins: [
+      react(),
+      tailwindcss(),
+      pdfAssets,
+      VitePWA({
+        registerType: "prompt",
+        includeAssets: ["sprinter.svg", "sprinter-maskable.svg"],
+        manifest: {
+          name: "Sprinter",
+          short_name: "Sprinter",
+          description: "A private, self-hosted AI chat workspace.",
+          theme_color: "#080b12",
+          background_color: "#080b12",
+          display: "standalone",
+          start_url: "/",
+          icons: [
+            { src: "/sprinter.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
+            { src: "/sprinter-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+          ],
+        },
+        workbox: {
+          globPatterns: ["**/*.{js,css,html,svg,woff2}"],
+          globIgnores: ["**/pdfjs/**", "**/pdfjs-*.js"],
+          runtimeCaching: [{
+            urlPattern: ({ url }) => url.pathname.startsWith("/pdfjs/") || /\/pdfjs-[^/]+\.js$/.test(url.pathname),
+            handler: "CacheFirst",
+            options: {
+              cacheName: "sprinter-pdf-assets",
+              expiration: { maxEntries: 320, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          }],
+          navigateFallback: "index.html",
+          cleanupOutdatedCaches: true,
+        },
+      }),
+    ],
+    server: {
+      port: 5173,
+      proxy: {
+        "/api": { target: apiTarget, changeOrigin: true },
+        "/healthz": { target: apiTarget, changeOrigin: true },
       },
-      workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,woff2}"],
-        globIgnores: ["**/pdfjs/**", "**/pdfjs-*.js"],
-        runtimeCaching: [{
-          urlPattern: ({ url }) => url.pathname.startsWith("/pdfjs/") || /\/pdfjs-[^/]+\.js$/.test(url.pathname),
-          handler: "CacheFirst",
-          options: {
-            cacheName: "sprinter-pdf-assets",
-            expiration: { maxEntries: 320, maxAgeSeconds: 60 * 60 * 24 * 365 },
-            cacheableResponse: { statuses: [0, 200] },
+    },
+    build: {
+      outDir: "dist",
+      emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("/pdfjs-dist/")) return "pdfjs";
           },
-        }],
-        navigateFallback: "index.html",
-        cleanupOutdatedCaches: true,
-      },
-    }),
-  ],
-  build: {
-    outDir: "dist",
-    emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("/pdfjs-dist/")) return "pdfjs";
         },
       },
     },
-  },
-  server: { port: 5173 },
+  };
 });

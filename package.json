@@ -1,12 +1,20 @@
 {
   "name": "sprinter-workspace",
   "private": true,
-  "workspaces": ["web", "e2e"],
+  "workspaces": [
+    "web",
+    "e2e"
+  ],
   "scripts": {
     "build": "npm run build --workspace web",
-    "dev": "npm run dev --workspace web",
+    "dev": "concurrently --kill-others-on-fail --names api,web --prefix-colors blue,magenta \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "DATA_DIR=./data SPRINTER_PASSWORD=development-password SPRINTER_INSECURE_COOKIES=true BIND=127.0.0.1 PORT=8080 cargo watch -w Cargo.toml -w Cargo.lock -w crates/sprinter -x 'run -p sprinter -- serve'",
+    "dev:web": "npm run dev --workspace web",
     "check": "npm run check --workspace web",
     "e2e": "npm run e2e --workspace e2e",
     "e2e:ui": "npm run e2e:ui --workspace e2e"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.4"
   }
 }

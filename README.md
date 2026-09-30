@@ -5,6 +5,28 @@ container and stores its SQLite database, uploads, and logs under `DATA_DIR`.
 OpenRouter is used for model discovery and chat generation; the API key is encrypted
 before it is stored.
 
+## Development
+
+Install the frontend dependencies and the Rust file watcher once:
+
+```sh
+npm install
+cargo install cargo-watch
+```
+
+Then start both development servers:
+
+```sh
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite reloads frontend changes and `cargo watch` restarts
+the API when Rust sources change. Vite proxies `/api` and `/healthz` to the API at
+`http://127.0.0.1:8080`, so the browser continues to use the normal same-origin API
+paths and session cookies. Development state is stored in `./data`, and the command
+uses a local development password with insecure cookies. Override the API proxy target
+with `VITE_API_PROXY_TARGET`, or run `npm run dev:api` and `npm run dev:web` separately.
+
 ## Run with Docker
 
 Use a strong master password and keep the data volume persistent:
