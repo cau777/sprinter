@@ -88,7 +88,7 @@ export function ModelPicker({ models, value, favorites = [], onChange, onToggleF
           <Modal.Dialog aria-labelledby={titleId} className="mx-auto flex max-h-[min(86dvh,780px)] w-[min(820px,calc(100vw-28px))] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[#0d1421] text-[var(--text)] shadow-2xl">
             <Modal.Header className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
               <div>
-                <p className="eyebrow text-center">MODEL LIBRARY</p>
+                <p className="mb-[11px] text-center font-mono text-[11px] tracking-[.16em] text-[#8290a9]">MODEL LIBRARY</p>
                 <Modal.Heading id={titleId} className="m-0 font-display text-lg font-medium text-slate-100">Choose a model</Modal.Heading>
               </div>
               <Button isIconOnly variant="ghost" className="h-8 w-8 rounded-lg text-slate-400" aria-label="Close model picker" onPress={() => setIsOpen(false)}><X size={17} /></Button>

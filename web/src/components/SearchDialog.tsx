@@ -42,7 +42,7 @@ export function SearchDialog({ open, onClose }: Props) {
       <Modal.Container className="fixed inset-0 z-50 flex w-full items-center justify-center p-3 sm:w-full" placement="center">
         <Modal.Dialog aria-labelledby="chat-search-title" className="mx-auto flex max-h-[min(80dvh,680px)] w-[min(620px,calc(100vw-28px))] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[#0d1421] text-[var(--text)] shadow-2xl">
           <Modal.Header className="flex items-center justify-between px-5 pt-4 pb-3">
-            <div><p className="eyebrow">YOUR CONVERSATIONS</p><Modal.Heading id="chat-search-title" className="m-0 font-display text-lg font-medium text-slate-100">Search chats</Modal.Heading></div>
+            <div><p className="mb-[11px] font-mono text-[11px] tracking-[.16em] text-[#8290a9]">YOUR CONVERSATIONS</p><Modal.Heading id="chat-search-title" className="m-0 font-display text-lg font-medium text-slate-100">Search chats</Modal.Heading></div>
             <Button isIconOnly variant="ghost" className="h-8 w-8 rounded-lg text-slate-400" aria-label="Close search" onPress={onClose}><X size={17} /></Button>
           </Modal.Header>
           <Modal.Body className="flex min-h-0 flex-1 flex-col px-5">

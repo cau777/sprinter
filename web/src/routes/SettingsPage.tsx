@@ -78,7 +78,7 @@ export function SettingsPage() {
 
   return (
     <section className="settings-page">
-      <header className="settings-heading"><div className="settings-heading-icon"><Settings2 size={18} /></div><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Settings</h1><p>Keep your workspace tuned to the way you think.</p></div></header>
+      <header className="settings-heading"><div className="settings-heading-icon"><Settings2 size={18} /></div><div><p className="mb-[3px] font-mono text-[11px] tracking-[.16em] text-[#8290a9]">YOUR WORKSPACE</p><h1>Settings</h1><p>Keep your workspace tuned to the way you think.</p></div></header>
       {settingsQuery.isLoading ? <div className="settings-loading">Loading settings…</div> : settingsQuery.isError ? <div className="settings-error" role="alert">{settingsQuery.error.message}</div> : <>
         {!online && <div className="settings-offline-note" role="status">You’re offline. Settings are read-only until you reconnect.</div>}
         {error && <div className="settings-toast-error" role="alert">{error}</div>}

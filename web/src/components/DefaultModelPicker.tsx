@@ -26,7 +26,7 @@ export function DefaultModelPicker({ isDisabled = false }: { isDisabled?: boolea
   if (settings.isLoading || models.isLoading) return <span className="model-control-loading">Loading models…</span>;
 
   const current = settings.data!;
-  return <div className="default-model-control">
+  return <div className="w-[min(260px,48vw)] min-w-0">
     <Suspense fallback={<span className="model-control-loading">Choose a model…</span>}><ModelPicker
       models={models.data?.items ?? []}
       value={current.default_model}
