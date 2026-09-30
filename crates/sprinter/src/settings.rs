@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -581,12 +581,20 @@ async fn get_models_inner(
             }));
         }
     }
-    let response = state
+    let key = cached_key(&state);
+    let request = state
         .http
-        .get(state.base_url("models"))
-        .send()
-        .await
-        .map_err(|_| ResponseError::provider("model_fetch_failed", "Could not reach OpenRouter"))?;
+        // This endpoint applies the account's configured provider preferences,
+        // privacy policy, and guardrails before we apply Sprinter's ZDR check.
+        .get(state.base_url("models/user"));
+    let response = if let Some(key) = &key {
+        request.bearer_auth(key.expose_secret())
+    } else {
+        request
+    }
+    .send()
+    .await
+    .map_err(|_| ResponseError::provider("model_fetch_failed", "Could not reach OpenRouter"))?;
     if !response.status().is_success() {
         return Err(ResponseError::provider(
             "model_fetch_failed",
@@ -605,42 +613,59 @@ async fn get_models_inner(
             "OpenRouter model response has no data array",
         )
     })?;
-    let endpoints_response = state.http.get(state.base_url("endpoints/zdr")).send().await;
-    let (zdr_endpoints, zdr_available) = match endpoints_response {
+    let request = state.http.get(state.base_url("endpoints/zdr"));
+    let endpoints_response = if let Some(key) = &key {
+        request.bearer_auth(key.expose_secret())
+    } else {
+        request
+    }
+    .send()
+    .await;
+    let zdr_endpoints = match endpoints_response {
         Ok(response) if response.status().is_success() => match response.json::<Value>().await {
             Ok(body) => match body.get("data").and_then(Value::as_array) {
-                Some(data) => (
-                    data.iter()
-                        .filter_map(parse_zdr_endpoint)
-                        .collect::<Vec<_>>(),
-                    true,
-                ),
+                Some(data) => data
+                    .iter()
+                    .filter_map(parse_zdr_endpoint)
+                    .collect::<Vec<_>>(),
                 None => {
-                    tracing::warn!(error = "missing data array", "ZDR endpoint catalog failed");
-                    (Vec::new(), false)
+                    return Err(ResponseError::provider(
+                        "invalid_provider_response",
+                        "OpenRouter ZDR endpoint response has no data array",
+                    ));
                 }
             },
-            Err(error) => {
-                tracing::warn!(error = %error, "ZDR endpoint catalog failed");
-                (Vec::new(), false)
+            Err(_) => {
+                return Err(ResponseError::provider(
+                    "invalid_provider_response",
+                    "OpenRouter returned invalid ZDR endpoint data",
+                ));
             }
         },
-        Ok(response) => {
-            tracing::warn!(status = %response.status(), "ZDR endpoint catalog failed");
-            (Vec::new(), false)
+        Ok(_) => {
+            return Err(ResponseError::provider(
+                "model_fetch_failed",
+                "OpenRouter returned an error while listing ZDR endpoints",
+            ));
         }
-        Err(error) => {
-            tracing::warn!(error = %error, "ZDR endpoint catalog failed");
-            (Vec::new(), false)
+        Err(_) => {
+            return Err(ResponseError::provider(
+                "model_fetch_failed",
+                "Could not reach OpenRouter's ZDR endpoint catalog",
+            ));
         }
     };
+    let zdr_model_ids = zdr_endpoints
+        .iter()
+        .map(|endpoint| endpoint.model_id.as_str())
+        .collect::<HashSet<_>>();
     let items = upstream
         .iter()
         .filter_map(parse_model)
+        // A model is selectable only when the authenticated account permits it
+        // and OpenRouter currently reports at least one ZDR provider route.
+        .filter(|model| zdr_model_ids.contains(model.id.as_str()))
         .map(|mut model| {
-            if !zdr_available {
-                return model;
-            }
             let endpoints = zdr_endpoints
                 .iter()
                 .filter(|endpoint| endpoint.model_id == model.id)
@@ -714,13 +739,12 @@ async fn get_models_inner(
         })
         .collect::<Vec<_>>();
     let models_with_tools = items.iter().filter(|item| !item.tools.is_empty()).count();
-    if zdr_available {
-        tracing::info!(
-            endpoints = zdr_endpoints.len(),
-            models_with_tools,
-            "ZDR endpoint catalog refreshed"
-        );
-    }
+    tracing::info!(
+        endpoints = zdr_endpoints.len(),
+        selectable_models = items.len(),
+        models_with_tools,
+        "ZDR-safe model catalog refreshed"
+    );
     *cache = Some(CachedModels {
         loaded_at: Instant::now(),
         items: items.clone(),
@@ -1209,13 +1233,32 @@ mod tests {
         let second = get_models_inner(state.clone(), RefreshQuery { refresh: None })
             .await
             .unwrap();
-        assert_eq!(first.0.items.len(), 5);
-        assert_eq!(second.0.items[1].id, "test/vision");
+        // test/vision is allowed by the account endpoint but has no ZDR route;
+        // test/title is absent from the account endpoint. Neither is exposed.
+        assert_eq!(first.0.items.len(), 3);
+        assert_eq!(
+            first
+                .0
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["test/text", "test/file", "test/partial"]
+        );
+        assert_eq!(second.0.items[1].id, "test/file");
         assert_eq!(
             request_log
                 .requests_snapshot()
                 .iter()
-                .filter(|request| request.path == "/api/v1/models")
+                .filter(|request| request.path == "/api/v1/models/user")
+                .count(),
+            1
+        );
+        assert_eq!(
+            request_log
+                .requests_snapshot()
+                .iter()
+                .filter(|request| request.path == "/api/v1/endpoints/zdr")
                 .count(),
             1
         );

@@ -247,7 +247,11 @@ fn request_body(
         "model": model,
         "messages": api_messages,
         "stream": stream,
-        "plugins": plugins
+        "plugins": plugins,
+        // Enforce ZDR at routing time as well as in the picker. This prevents a
+        // model with both ZDR and non-ZDR providers from falling back to the
+        // latter if account-level OpenRouter preferences are misconfigured.
+        "provider": {"zdr": true}
     });
     let system = system_parts.join("\n\n");
     if has_system {
@@ -260,7 +264,6 @@ fn request_body(
         body["max_tokens"] = json!(64);
     }
     if tools.enabled.iter().any(|tool| tool == tools::WEB_SEARCH) {
-        body["provider"] = json!({"zdr": true});
         if !tools.web_search_only.is_empty() {
             body["provider"]["only"] = json!(tools.web_search_only);
         }
@@ -270,7 +273,6 @@ fn request_body(
         }]);
         body["max_tool_calls"] = json!(5);
     } else if tools.enabled.iter().any(|tool| tool == tools::BASH) {
-        body["provider"] = json!({"zdr": true});
         body["tools"] = json!([{
             "type": tools::BASH,
             "parameters": {
@@ -962,6 +964,37 @@ mod tests {
             super::map_finish_reason("provider_specific"),
             "provider_specific"
         );
+    }
+
+    #[test]
+    fn every_request_enforces_zdr_routing_without_overwriting_tool_provider_options() {
+        let messages = [ChatMessage {
+            role: "user".into(),
+            content: Value::String("hello".into()),
+        }];
+        let plain = super::request_body(
+            "openai/gpt-6-luna",
+            &messages,
+            true,
+            false,
+            Some("a-session"),
+            &super::ToolRequestConfig::default(),
+        );
+        assert_eq!(plain.pointer("/provider/zdr"), Some(&json!(true)));
+
+        let search = super::request_body(
+            "openai/gpt-6-luna",
+            &messages,
+            true,
+            false,
+            Some("a-session"),
+            &super::ToolRequestConfig {
+                enabled: vec![crate::tools::WEB_SEARCH.into()],
+                web_search_only: vec!["azure".into()],
+            },
+        );
+        assert_eq!(search.pointer("/provider/zdr"), Some(&json!(true)));
+        assert_eq!(search.pointer("/provider/only"), Some(&json!(["azure"])));
     }
 
     #[test]

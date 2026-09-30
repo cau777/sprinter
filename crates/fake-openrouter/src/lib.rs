@@ -38,6 +38,7 @@ impl FakeOpenRouter {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/api/v1/models", get(models))
+            .route("/api/v1/models/user", get(user_models))
             .route("/api/v1/endpoints/zdr", get(zdr_endpoints))
             .route("/api/v1/credits", get(credits))
             .route("/api/v1/key", get(key_info))
@@ -98,6 +99,18 @@ async fn models(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json
         with_tools(model("test/file", "Fake PDF", 32768, "0.000001", "0.000002", false, true)),
         with_tools(model("test/partial", "Fake Partial Search", 32768, "0.000001", "0.000002", false, false)),
         model("test/title", "Fake Title", 8192, "0.0000001", "0.0000002", false, false)
+    ]}))
+}
+
+async fn user_models(State(state): State<FakeOpenRouter>, headers: HeaderMap) -> Json<Value> {
+    state.record("GET", "/api/v1/models/user", &headers, Value::Null);
+    // Simulates an account policy that excludes test/title while retaining a
+    // non-ZDR-capable model (test/vision) for Sprinter to remove.
+    Json(json!({"data": [
+        with_tools(model("test/text", "Fake Text", 32768, "0.000001", "0.000002", false, false)),
+        model("test/vision", "Fake Vision", 65536, "0.000003", "0.000006", true, false),
+        with_tools(model("test/file", "Fake PDF", 32768, "0.000001", "0.000002", false, true)),
+        with_tools(model("test/partial", "Fake Partial Search", 32768, "0.000001", "0.000002", false, false))
     ]}))
 }
 
